@@ -8,3 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Per-library catalog database -- personal data, never source-controlled;
+# the library root is wherever this server is run from, not this repo.
+.catalog/
+
+# Test artifacts
+.pytest_cache/
