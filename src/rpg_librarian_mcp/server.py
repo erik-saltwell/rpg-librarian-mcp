@@ -60,9 +60,10 @@ def sync_catalog() -> dict:
     catalog entries for files that no longer exist on disk. Extracts
     media-type-specific metadata and universal identity fields from embedded
     file tags. Does not perform product association or OCR text extraction --
-    those are separate tools. Safe to call with zero arguments on both a
-    brand-new and an existing library; this is the bootstrap step and the
-    ongoing reconciliation step."""
+    those are separate tools. Also writes claude.md/agents.md at the library
+    root if they don't already exist (never overwrites either). Safe to call
+    with zero arguments on both a brand-new and an existing library; this is
+    the bootstrap step and the ongoing reconciliation step."""
     conn = db.connect()
     try:
         stats = _sync_catalog(conn)
@@ -75,6 +76,7 @@ def sync_catalog() -> dict:
         "removed": stats.removed,
         "errored": stats.errored,
         "errors": stats.error_details,
+        "docs_created": stats.docs_created,
     }
 
 

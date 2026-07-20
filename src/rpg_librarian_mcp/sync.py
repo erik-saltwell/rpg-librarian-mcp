@@ -11,10 +11,11 @@ from typing import Any
 from . import db
 from .extractors import EXTRACTORS
 from .extractors.detect import find_mime_type, media_type_for_mime
+from .library_docs import DOC_FILENAMES, ensure_library_docs
 from .schema import ENTRIES, MEDIA_METADATA_TABLES
 from .sql_helpers import row_to_dict, upsert
 
-_EXCLUDED_FILENAMES = {"claude.md", "agents.md"}
+_EXCLUDED_FILENAMES = set(DOC_FILENAMES)
 _MAX_REPORTED_ERRORS = 20
 _HASH_CHUNK_SIZE = 1024 * 1024
 
@@ -27,6 +28,7 @@ class SyncStats:
     removed: int = 0
     errored: int = 0
     error_details: list[str] = field(default_factory=list)
+    docs_created: list[str] = field(default_factory=list)
 
     def record_error(self, filepath: str, reason: str) -> None:
         self.errored += 1
@@ -53,11 +55,13 @@ def sync_catalog(conn: sqlite3.Connection, library_root: Path | None = None) -> 
     re-extracted only if their mtime changed since the last sync; unchanged
     files are skipped without touching disk beyond a stat() call. Does not
     touch product_id, ISBN/LLM lookup fields, or OCR text -- those belong to
-    separate tools."""
+    separate tools. Also writes claude.md/agents.md at the library root if
+    they don't already exist yet (never overwrites either)."""
     library_root = (library_root or Path.cwd()).resolve()
     (db.catalog_dir(library_root) / "text_fragments").mkdir(parents=True, exist_ok=True)
 
     stats = SyncStats()
+    stats.docs_created = ensure_library_docs(library_root)
     existing_rows = {row["filepath"]: row_to_dict(row, ENTRIES) for row in conn.execute("SELECT * FROM entries")}
     seen_filepaths: set[str] = set()
 

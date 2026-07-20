@@ -59,6 +59,24 @@ def test_bootstrap_on_empty_library(library):
     stats = sync_catalog(conn, root)
     assert (root / ".catalog" / "text_fragments").is_dir()
     assert (stats.added, stats.updated, stats.unchanged, stats.removed, stats.errored) == (0, 0, 0, 0, 0)
+    assert (root / "claude.md").exists()
+    assert (root / "agents.md").exists()
+    assert set(stats.docs_created) == {"claude.md", "agents.md"}
+
+
+def test_does_not_overwrite_existing_library_docs(library):
+    root, conn = library
+    (root / "claude.md").write_text("my custom instructions", encoding="utf-8")
+
+    stats = sync_catalog(conn, root)
+
+    assert (root / "claude.md").read_text(encoding="utf-8") == "my custom instructions"
+    assert (root / "agents.md").exists()
+    assert stats.docs_created == ["agents.md"]
+
+    stats2 = sync_catalog(conn, root)
+    assert stats2.docs_created == []
+    assert (root / "claude.md").read_text(encoding="utf-8") == "my custom instructions"
 
 
 def test_adds_one_file_per_media_type(library):
