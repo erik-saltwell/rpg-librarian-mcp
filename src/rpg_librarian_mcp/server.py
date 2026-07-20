@@ -3,12 +3,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 from . import db
 from .catalog_io import export_catalog, import_catalog
 from .purge_errors import purge_errors as _purge_errors
 from .sync import sync_catalog as _sync_catalog
+
+# Library-specific config (e.g. future external-lookup API keys) lives in a
+# .env file at the library root -- resolved relative to cwd exactly like
+# .catalog/, never searched for upward, consistent with db.py's convention
+# that the library root is wherever this server was started from. A missing
+# .env is a silent no-op, not an error.
+load_dotenv(Path.cwd() / ".env")
 
 mcp = FastMCP("rpg-librarian")
 
