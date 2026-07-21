@@ -15,6 +15,7 @@ wheels/
 
 # Test artifacts
 .pytest_cache/
+.pytest-tmp/
 
 # Per-library config/secrets -- loaded from the library root at startup,
 # never source-controlled. See .env.example for the shape.
