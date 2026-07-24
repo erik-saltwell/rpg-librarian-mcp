@@ -1,4 +1,4 @@
-"""Basic status tool -- also the template for further tool modules."""
+"""Reports server version and configured library location."""
 
 from __future__ import annotations
 

@@ -8,7 +8,7 @@ import sys
 from fastmcp import FastMCP
 
 from .config import Config, load_env
-from .tools import REGISTRARS
+from .mcp import REGISTRARS
 
 log = logging.getLogger(__name__)
 

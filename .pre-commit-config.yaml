@@ -39,3 +39,10 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-push]
+
+      - id: check-alembic-migrations
+        name: Check Alembic migrations
+        entry: uv run python scripts/check_migrations.py
+        language: system
+        pass_filenames: false
+        always_run: true

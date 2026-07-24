@@ -9,7 +9,7 @@ src/rpg_librarian_mcp/
   __main__.py     entry point (`rpg-librarian-mcp` / `python -m rpg_librarian_mcp`)
   server.py       builds the FastMCP server, registers tools, runs stdio
   config.py       .env loading + Config (library root = cwd)
-  tools/
+  utils/
     __init__.py   REGISTRARS list -- add new tool modules here
     status.py     librarian_status (template for new tool modules)
 tests/

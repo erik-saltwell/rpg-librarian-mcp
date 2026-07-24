@@ -20,3 +20,10 @@ wheels/
 # Per-library config/secrets -- loaded from the library root at startup,
 # never source-controlled. See .env.example for the shape.
 .env
+
+
+# database files - may be made for alembic checking
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3

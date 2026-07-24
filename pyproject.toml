@@ -5,8 +5,11 @@ description = "MCP server for organizing a digital RPG archive"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.18.5",
     "fastmcp>=3.0",
     "python-dotenv>=1.0",
+    "python-magic>=0.4.27",
+    "sqlmodel>=0.0.39",
 ]
 
 [project.scripts]
