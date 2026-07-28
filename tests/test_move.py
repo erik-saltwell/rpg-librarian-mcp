@@ -211,3 +211,19 @@ def test_move_failed_rename_leaves_catalog_unchanged(tmp_path, monkeypatch):
         assert len(entries) == 1
         assert entries[0].parent_path == Path("shelf/box")
         assert entries[0].filename == "book.txt"
+
+
+def test_move_folder_survives_unrelated_bad_media_type(poisoned_catalog, tmp_path):
+    """Bug 1: an out-of-scope row with an invalid media_type must not crash
+    a folder move that has nothing to do with it (collision check and
+    rename-loop scan both scoped elsewhere)."""
+    catalog = poisoned_catalog
+    _write_file(tmp_path, "shelf/old/book.txt")
+    with session_scope(catalog) as session:
+        _make_entry(session, "shelf/old", "book.txt")
+        session.commit()
+
+    result = move(catalog, tmp_path / "shelf" / "old", tmp_path / "shelf" / "new")
+
+    assert result["entries_updated"] == 1
+    assert (tmp_path / "shelf" / "new" / "book.txt").exists()

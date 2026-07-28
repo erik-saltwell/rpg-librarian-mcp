@@ -53,7 +53,9 @@ def run_readonly_query(
 ) -> dict[str, object]:
     """Run one read-only SQL statement against the catalog db, return the result."""
     _validate_statement(sql)
-    effective_limit = max(1, min(limit, _MAX_LIMIT))
+    if limit < 1:
+        raise ValueError(f"limit must be a positive integer, got {limit}")
+    effective_limit = min(limit, _MAX_LIMIT)
 
     with readonly_connection(catalog) as conn:
         cursor = conn.execute(sql)

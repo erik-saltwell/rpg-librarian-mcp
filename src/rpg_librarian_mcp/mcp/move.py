@@ -5,12 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastmcp import FastMCP
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from ..catalog import Catalog
 from ..db import session_scope
-from ..model import Entry
-from ..tools.entry_queries import entry_by_exact_path
+from ..tools.entry_queries import entries_under, entry_by_exact_path
 
 
 def _validate_destination_depth(
@@ -50,10 +49,7 @@ def _check_no_stale_catalog_collision(
     disk-existence checks, for the same reason.
     """
     if is_dir:
-        if any(
-            entry.parent_path.is_relative_to(destination_relative)
-            for entry in session.exec(select(Entry)).all()
-        ):
+        if entries_under(session, destination_relative):
             raise ValueError(f"{destination_relative} already has cataloged entries")
     elif (
         entry_by_exact_path(
@@ -84,12 +80,11 @@ def move(catalog: Catalog, source: Path, destination: Path) -> dict[str, object]
 
         entries_updated = 0
         if is_dir:
-            for entry in session.exec(select(Entry)).all():
-                if entry.parent_path.is_relative_to(source_relative):
-                    suffix = entry.parent_path.relative_to(source_relative)
-                    entry.parent_path = destination_relative / suffix
-                    session.add(entry)
-                    entries_updated += 1
+            for entry in entries_under(session, source_relative):
+                suffix = entry.parent_path.relative_to(source_relative)
+                entry.parent_path = destination_relative / suffix
+                session.add(entry)
+                entries_updated += 1
         else:
             entry = entry_by_exact_path(
                 session, source_relative.parent, source_relative.name

@@ -12,6 +12,7 @@ from ..db import session_scope
 from ..model import Entry, Error
 from ..model.Error import ErrorStage
 from ..model.MediaType import MediaType
+from ..tools.entry_queries import entries_by_parent, entries_under
 from ..tools.media_type import detect_media_type, detect_mime_type
 from ..tools.path_helper import walk_filesystem
 from ..tools.sha256 import generate_file_size, generate_sha256
@@ -51,6 +52,27 @@ def _clear_stale_error(session: Session, entry: Entry) -> None:
         session.delete(stale_error)
 
 
+def _create_stub_entry(session: Session, parent_path: Path, filename: str) -> Entry:
+    """A placeholder Entry for a file that has never processed successfully.
+
+    error.entry_id is NOT NULL with a FK to entry.id, so an Error can't be
+    persisted without one. This stub gives a failing-on-first-scan file an
+    id to attach an Error to; a later successful process overwrites its
+    placeholder fields the same way it would for any other existing entry.
+    """
+    stub = Entry(
+        parent_path=parent_path,
+        filename=filename,
+        sha256="0" * 64,
+        size_in_bytes=0,
+        mime_type="application/octet-stream",
+        media_type=MediaType.unknown,
+    )
+    session.add(stub)
+    session.flush()
+    return stub
+
+
 class UpdateCatalogResult(NamedTuple):
     scanned: int
     skipped: int
@@ -68,7 +90,7 @@ class UpdateCatalogCommand:
     def _record_error(
         self,
         session: Session,
-        existing: Entry | None,
+        entry: Entry,
         entry_relative_path: Path,
         exc: Exception,
         errors: list[ProcessingError],
@@ -76,17 +98,16 @@ class UpdateCatalogCommand:
         if len(errors) < self.max_errors:
             errors.append(ProcessingError(path=entry_relative_path, reason=str(exc)))
 
-        if existing is not None:
-            error_row = session.get(Error, (existing.id, ErrorStage.populate_file_data))
-            if error_row is None:
-                error_row = Error(
-                    entry_id=existing.id,
-                    stage=ErrorStage.populate_file_data,
-                    error_text=str(exc),
-                )
-            else:
-                error_row.error_text = str(exc)
-            session.add(error_row)
+        error_row = session.get(Error, (entry.id, ErrorStage.populate_file_data))
+        if error_row is None:
+            error_row = Error(
+                entry_id=entry.id,
+                stage=ErrorStage.populate_file_data,
+                error_text=str(exc),
+            )
+        else:
+            error_row.error_text = str(exc)
+        session.add(error_row)
 
     async def process(
         self, starting_path: Path, process_recursively: bool, force: bool, ctx: Context
@@ -124,8 +145,11 @@ class UpdateCatalogCommand:
                         fields = _compute_entry_fields(file_path)
                     except Exception as exc:
                         errored += 1
+                        error_target = existing or _create_stub_entry(
+                            session, parent_path, filename
+                        )
                         self._record_error(
-                            session, existing, entry_relative_path, exc, errors
+                            session, error_target, entry_relative_path, exc, errors
                         )
                     else:
                         successfully_processed += 1
@@ -152,13 +176,13 @@ class UpdateCatalogCommand:
                 last_reported_percent = percent
             removed = 0
             if absolute_path.is_dir():
-                for entry in session.exec(select(Entry)).all():
-                    in_scope = (
-                        entry.parent_path.is_relative_to(relative_path)
-                        if process_recursively
-                        else entry.parent_path == relative_path
-                    )
-                    if in_scope and entry.path not in paths_on_disk:
+                in_scope_entries = (
+                    entries_under(session, relative_path)
+                    if process_recursively
+                    else entries_by_parent(session, relative_path)
+                )
+                for entry in in_scope_entries:
+                    if entry.path not in paths_on_disk:
                         session.delete(entry)
                         removed += 1
                 session.commit()

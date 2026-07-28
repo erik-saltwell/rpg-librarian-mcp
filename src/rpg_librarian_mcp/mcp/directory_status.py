@@ -6,12 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastmcp import FastMCP
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from ..catalog import Catalog
 from ..db import session_scope
-from ..model import Entry
-from ..tools.entry_queries import entries_by_parent
+from ..tools.entry_queries import entries_by_parent, entries_under
 from ..tools.path_helper import walk_directories, walk_filesystem
 
 
@@ -24,12 +23,7 @@ def list_directory_entries(
 
     with session_scope(catalog) as session:
         if recursive:
-            all_entries = session.exec(select(Entry)).all()
-            entries = [
-                entry
-                for entry in all_entries
-                if entry.parent_path.is_relative_to(relative_path)
-            ]
+            entries = entries_under(session, relative_path)
         else:
             entries = entries_by_parent(session, relative_path)
         by_path = {entry.path: entry for entry in entries}
@@ -65,9 +59,7 @@ def _grouped_counts_by_directory(
 ) -> dict[Path, tuple[int, int]]:
     """parent_path -> (with_product, without_product) counts under relative_path."""
     counts: dict[Path, tuple[int, int]] = {}
-    for entry in session.exec(select(Entry)).all():
-        if not entry.parent_path.is_relative_to(relative_path):
-            continue
+    for entry in entries_under(session, relative_path):
         with_product, without_product = counts.get(entry.parent_path, (0, 0))
         if entry.has_product:
             with_product += 1
@@ -92,14 +84,24 @@ def summarize_directories(
     limit: int = 100,
 ) -> dict[str, object]:
     """Per-directory product-identification counts, recursively under `path`."""
+    if limit < 1:
+        raise ValueError(f"limit must be a positive integer, got {limit}")
     relative_path = catalog.to_relative(path)
     absolute_path = catalog.to_absolute(relative_path)
-    effective_limit = max(1, min(limit, 1000))
+    effective_limit = min(limit, 1000)
 
     with session_scope(catalog) as session:
         scanned_counts = _grouped_counts_by_directory(session, relative_path)
 
-    candidate_dirs: set[Path] = set(scanned_counts)
+    # Grouped keys come straight from stored parent_path values, which can
+    # in principle include a depth-<2 path planted outside the app's own
+    # write path (ParentPathType rejects such a value on any normal bind).
+    # No real Entry's parent_path can be that shallow, so such a group is
+    # never a legitimate directory row -- same depth>=2 filter as the
+    # filesystem-walk candidates just below, for the same reason.
+    candidate_dirs: set[Path] = {
+        dir_path for dir_path in scanned_counts if len(dir_path.parts) >= 2
+    }
     if len(relative_path.parts) >= 2:
         candidate_dirs.add(relative_path)
     if absolute_path.is_dir():

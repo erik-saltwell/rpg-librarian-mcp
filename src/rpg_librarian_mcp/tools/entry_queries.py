@@ -38,3 +38,21 @@ def entry_by_exact_path(
             Entry.parent_path == parent_path, Entry.filename == filename
         )
     ).first()
+
+
+def entries_under(session: Session, relative_path: Path) -> list[Entry]:
+    """Every Entry whose parent_path is `relative_path` or a descendant of it.
+
+    A full-table load, filtered in Python via `is_relative_to` rather than a
+    SQL `LIKE` prefix match -- `ParentPathType`'s trailing-slash
+    normalization makes `LIKE` unreliable here, same reasoning as
+    `entries_by_parent` above. Safe against a row with a value that doesn't
+    round-trip cleanly (e.g. a media_type not in the MediaType enum) because
+    `Entry.media_type` degrades such values to `MediaType.unknown` on read
+    (`TolerantMediaType`, `model/MediaType.py`) instead of raising.
+    """
+    return [
+        entry
+        for entry in session.exec(select(Entry)).all()
+        if entry.parent_path.is_relative_to(relative_path)
+    ]

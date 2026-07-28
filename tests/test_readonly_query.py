@@ -119,6 +119,22 @@ def test_run_readonly_query_clamps_limit_to_hard_max(tmp_path):
     assert result["rows"] == [[1]]
 
 
+def test_run_readonly_query_rejects_zero_limit(tmp_path):
+    """Bug 2: limit=0 silently clamped to 1 rather than being rejected."""
+    catalog = _catalog(tmp_path)
+
+    with pytest.raises(ValueError, match="positive"):
+        run_readonly_query(catalog, "SELECT 1", limit=0)
+
+
+def test_run_readonly_query_rejects_negative_limit(tmp_path):
+    """Bug 2: limit=-1 silently clamped to 1 rather than being rejected."""
+    catalog = _catalog(tmp_path)
+
+    with pytest.raises(ValueError, match="positive"):
+        run_readonly_query(catalog, "SELECT 1", limit=-1)
+
+
 def test_get_catalog_schema_returns_domain_tables_only(tmp_path):
     catalog = _catalog(tmp_path)
 

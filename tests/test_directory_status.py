@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 from sqlmodel import select
 
 from rpg_librarian_mcp.catalog import Catalog
@@ -196,6 +197,22 @@ def test_summarize_directories_limit_and_truncated(tmp_path):
     assert result["truncated"] is True
 
 
+def test_summarize_directories_rejects_zero_limit(tmp_path):
+    """Bug 2: limit=0 silently clamped to 1 rather than being rejected."""
+    catalog = _catalog(tmp_path)
+
+    with pytest.raises(ValueError, match="positive"):
+        summarize_directories(catalog, tmp_path, limit=0)
+
+
+def test_summarize_directories_rejects_negative_limit(tmp_path):
+    """Bug 2: limit=-1 silently clamped to 1 rather than being rejected."""
+    catalog = _catalog(tmp_path)
+
+    with pytest.raises(ValueError, match="positive"):
+        summarize_directories(catalog, tmp_path, limit=-1)
+
+
 def test_summarize_directories_does_not_mutate_catalog(tmp_path):
     catalog = _catalog(tmp_path)
     with session_scope(catalog) as session:
@@ -206,3 +223,72 @@ def test_summarize_directories_does_not_mutate_catalog(tmp_path):
 
     with session_scope(catalog) as session:
         assert len(session.exec(select(Entry)).all()) == 1
+
+
+def test_list_directory_entries_recursive_survives_unrelated_bad_media_type(
+    poisoned_catalog, tmp_path
+):
+    """Bug 1: an out-of-scope row with an invalid media_type must not crash
+    a query scoped to a different subtree."""
+    catalog = poisoned_catalog
+    _write_file(tmp_path, "shelf/box/book.txt")
+    with session_scope(catalog) as session:
+        _make_entry(session, "shelf/box", "book.txt")
+        session.commit()
+
+    result = list_directory_entries(catalog, tmp_path / "shelf", recursive=True)
+
+    assert result["count"] == 1
+    assert result["files"][0]["filename"] == "book.txt"
+
+
+def test_summarize_directories_survives_unrelated_bad_media_type(
+    poisoned_catalog, tmp_path
+):
+    """Bug 1: same, for summarize_directories's grouped-count query."""
+    catalog = poisoned_catalog
+    with session_scope(catalog) as session:
+        _make_entry(session, "shelf/box", "book.txt")
+        session.commit()
+
+    result = summarize_directories(catalog, tmp_path / "shelf")
+
+    assert [row["path"] for row in result["directories"]] == ["shelf/box"]
+
+
+def test_list_directory_entries_survives_bad_media_type_at_library_root(
+    poisoned_catalog, tmp_path
+):
+    """Bug 1: the poisoned row itself lives at the library root (parent_path
+    "."), so a root-scoped call -- the primary way summarize_directories and
+    recursive list_directory_entries get used -- must not crash either."""
+    catalog = poisoned_catalog
+    _write_file(tmp_path, "shelf/box/book.txt")
+    with session_scope(catalog) as session:
+        _make_entry(session, "shelf/box", "book.txt")
+        session.commit()
+
+    result = list_directory_entries(catalog, tmp_path, recursive=True)
+
+    assert result["count"] == 1
+    assert result["files"][0]["filename"] == "book.txt"
+
+
+def test_summarize_directories_survives_bad_media_type_at_library_root(
+    poisoned_catalog, tmp_path
+):
+    """Bug 1: same, scoped at the library root itself.
+
+    The poisoned row's own parent_path is "." -- a depth-<2 path a real
+    Entry could never have (ParentPathType rejects it on any normal bind).
+    Such a group must not surface as a phantom directory row; only the
+    legitimate "shelf/box" group should appear.
+    """
+    catalog = poisoned_catalog
+    with session_scope(catalog) as session:
+        _make_entry(session, "shelf/box", "book.txt")
+        session.commit()
+
+    result = summarize_directories(catalog, tmp_path)
+
+    assert {row["path"] for row in result["directories"]} == {"shelf/box"}

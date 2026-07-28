@@ -16,7 +16,7 @@ from .core import (
     validate_filename,
     validate_parent_path,
 )
-from .MediaType import MediaType
+from .MediaType import MediaType, TolerantMediaType
 
 
 class Entry(EntityBase, table=True):
@@ -41,7 +41,9 @@ class Entry(EntityBase, table=True):
     )
     size_in_bytes: NonNegativeInt = Field(nullable=False, index=False)
     mime_type: NonEmptyStr = Field(nullable=False, index=False)
-    media_type: MediaType = Field(nullable=False, index=True)
+    media_type: MediaType = Field(
+        sa_column=Column(TolerantMediaType(length=32), nullable=False, index=True)
+    )
 
     @property
     def path(self) -> Path:

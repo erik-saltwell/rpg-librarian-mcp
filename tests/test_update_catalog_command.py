@@ -113,9 +113,12 @@ async def test_non_recursive_deletion_does_not_touch_sibling_folder(tmp_path):
         assert {e.parent_path.name for e in entries} == {"box-a", "box-b"}
 
 
-async def test_processing_error_on_new_file_is_reported_but_not_persisted(
+async def test_processing_error_on_new_file_is_persisted_via_stub_entry(
     tmp_path, monkeypatch
 ):
+    """Bug 3: a file that fails before ever getting an Entry row must still
+    get a persisted Error row (via a stub Entry), so list_errors can surface
+    it -- not just report it transiently in this call's response."""
     _make_book(tmp_path)
     catalog = _catalog(tmp_path)
     command = UpdateCatalogCommand(catalog)
@@ -128,10 +131,43 @@ async def test_processing_error_on_new_file_is_reported_but_not_persisted(
     result = await command.process(tmp_path, True, False, AsyncMock())
 
     assert result.errored == 1
+    assert result.successfully_processed == 0
     assert result.errors[0].reason == "boom"
     with session_scope(catalog) as session:
-        assert session.exec(select(Entry)).all() == []
-        assert session.exec(select(Error)).all() == []
+        entries = session.exec(select(Entry)).all()
+        assert len(entries) == 1
+        errors = session.exec(select(Error)).all()
+        assert len(errors) == 1
+        assert errors[0].entry_id == entries[0].id
+        assert errors[0].error_text == "boom"
+
+
+async def test_stub_entry_causes_second_unforced_scan_to_skip_not_reerror(
+    tmp_path, monkeypatch
+):
+    """Bug 3, pinning a side effect of the stub-entry fix: once a stub Entry
+    exists, the file it stands in for is no longer "new" on the next scan.
+    _should_process_row compares file mtime to the stub's updated_at (just
+    set to now), so an unforced rescan skips it -- the failure no longer
+    reappears in every call's inline `errors`, but the persisted Error row
+    (the actual point of this fix) survives untouched. A forced rescan (or
+    an actual file change) still reprocesses it normally."""
+    _make_book(tmp_path)
+    catalog = _catalog(tmp_path)
+    command = UpdateCatalogCommand(catalog)
+    monkeypatch.setattr(
+        command_module,
+        "generate_sha256",
+        lambda path: (_ for _ in ()).throw(ValueError("boom")),
+    )
+    await command.process(tmp_path, True, False, AsyncMock())
+
+    result = await command.process(tmp_path, True, False, AsyncMock())
+
+    assert result.errored == 0
+    assert result.skipped == 1
+    with session_scope(catalog) as session:
+        assert len(session.exec(select(Error)).all()) == 1
 
 
 async def test_processing_error_on_existing_file_is_persisted_and_then_cleared(
@@ -222,3 +258,40 @@ async def test_progress_reporting_is_throttled_by_percentage(tmp_path):
     # 150 files compressed into <=101 distinct percentage buckets (0-100).
     assert ctx.report_progress.call_count <= 101
     assert ctx.report_progress.call_count < file_count
+
+
+async def test_directory_mode_survives_unrelated_bad_media_type(poisoned_catalog):
+    """Bug 1: the removal-reconciliation loop's full-table scan must not
+    crash on an out-of-scope row with an invalid media_type."""
+    catalog = poisoned_catalog
+    shelf = catalog.library_root / "shelf" / "box"
+    shelf.mkdir(parents=True)
+    (shelf / "book.txt").write_text("hello world")
+    command = UpdateCatalogCommand(catalog)
+
+    result = await command.process(shelf, False, False, AsyncMock())
+
+    assert result.scanned == 1
+    assert result.successfully_processed == 1
+    assert result.removed == 0
+
+
+async def test_directory_mode_at_root_self_heals_phantom_row(poisoned_catalog):
+    """Bug 1, follow-through: a root-scoped directory-mode call includes the
+    poisoned row's own directory in scope. Since media_type now degrades to
+    `unknown` on read instead of raising (TolerantMediaType), the row
+    deserializes fine, is recognized as having no backing file on disk, and
+    gets removed by the existing reconciliation logic -- no new tool needed
+    to recover from a bad row like this."""
+    catalog = poisoned_catalog
+    shelf = catalog.library_root / "shelf" / "box"
+    shelf.mkdir(parents=True)
+    (shelf / "book.txt").write_text("hello world")
+    command = UpdateCatalogCommand(catalog)
+
+    result = await command.process(catalog.library_root, True, False, AsyncMock())
+
+    assert result.removed == 1
+    with session_scope(catalog) as session:
+        remaining = {e.filename for e in session.exec(select(Entry)).all()}
+        assert remaining == {"book.txt"}

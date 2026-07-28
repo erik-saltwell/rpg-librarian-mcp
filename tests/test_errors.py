@@ -1,11 +1,18 @@
+import importlib
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 from rpg_librarian_mcp.catalog import Catalog
+from rpg_librarian_mcp.commands.UpdateCatalogCommand import UpdateCatalogCommand
 from rpg_librarian_mcp.db import session_scope
 from rpg_librarian_mcp.mcp.errors import list_errors as _list_errors
 from rpg_librarian_mcp.model import Entry, Error
 from rpg_librarian_mcp.model.Error import ErrorStage
+
+command_module = importlib.import_module(
+    "rpg_librarian_mcp.commands.UpdateCatalogCommand"
+)
 
 FAKE_SHA = "a" * 64
 
@@ -97,6 +104,34 @@ def test_list_errors_filters_by_stage(tmp_path):
     matching = list_errors(catalog, stage=ErrorStage.populate_file_data)
 
     assert matching["count"] == 1
+
+
+async def test_list_errors_surfaces_a_permission_failure_on_a_brand_new_file(
+    tmp_path, monkeypatch
+):
+    """Bug 3, through the reported symptom: update_catalog's inline response
+    already showed this error; the bug was that list_errors() afterward
+    returned {"errors":[],"count":0} because no Entry existed yet to attach
+    an Error row to. This runs the real command (not a hand-built Error
+    row) and checks list_errors actually finds it."""
+    shelf = tmp_path / "shelf" / "box"
+    shelf.mkdir(parents=True)
+    (shelf / "book.txt").write_text("hello world")
+    catalog = _catalog(tmp_path)
+    command = UpdateCatalogCommand(catalog)
+    monkeypatch.setattr(
+        command_module,
+        "generate_sha256",
+        lambda path: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+
+    await command.process(shelf, False, False, AsyncMock())
+
+    result = list_errors(catalog)
+
+    assert result["count"] == 1
+    assert result["errors"][0]["path"] == "shelf/box/book.txt"
+    assert "denied" in result["errors"][0]["error_text"]
 
 
 def test_list_errors_empty_when_no_errors(tmp_path):
