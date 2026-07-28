@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import find_dotenv, load_dotenv
 
 CATALOG_DIRNAME = ".catalog"
+DB_FILENAME = "catalog.db"
 
 
 def load_env() -> str | None:
@@ -28,7 +29,7 @@ def load_env() -> str | None:
 
 
 @dataclass(frozen=True, slots=True)
-class Config:
+class Catalog:
     """Runtime settings for one library.
 
     The library root is the working directory the server was launched from --
@@ -41,8 +42,29 @@ class Config:
     @property
     def catalog_dir(self) -> Path:
         """The metadata store, always ``<library root>/.catalog``."""
-        return self.library_root / CATALOG_DIRNAME
+        return self.to_absolute(Path(CATALOG_DIRNAME))
+
+    @property
+    def db_path(self) -> Path:
+        return self.catalog_dir / DB_FILENAME
+
+    def to_absolute(self, relative_path: Path) -> Path:
+        if relative_path.is_absolute():
+            raise ValueError(f"{relative_path} is already an absolute path")
+
+        return self.library_root / relative_path
+
+    def to_relative(self, absolute_path: Path) -> Path:
+        if not absolute_path.is_absolute():
+            raise ValueError(f"{absolute_path} is not an absolute path")
+
+        try:
+            return absolute_path.resolve().relative_to(self.library_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"{absolute_path} is not inside the library root {self.library_root}"
+            ) from exc
 
     @classmethod
-    def from_cwd(cls) -> Config:
+    def from_cwd(cls) -> Catalog:
         return cls(library_root=Path(os.getcwd()).resolve())

@@ -31,7 +31,7 @@ class Entry(EntityBase, table=True):
     )
     filename: NonEmptyStr = Field(nullable=False, index=False)
 
-    sha356: Sha256 = Field(
+    sha256: Sha256 = Field(
         nullable=False,
         index=True,
     )

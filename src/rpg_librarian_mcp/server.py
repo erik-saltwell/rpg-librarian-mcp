@@ -7,7 +7,7 @@ import sys
 
 from fastmcp import FastMCP
 
-from .config import Config, load_env
+from .catalog import Catalog, load_env
 from .mcp import REGISTRARS
 
 log = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ def configure_logging() -> None:
 def create_server() -> FastMCP:
     """Build the server with all tools registered."""
     env_path = load_env()
-    config = Config.from_cwd()
+    config = Catalog.from_cwd()
 
     mcp = FastMCP(name="rpg-librarian-mcp")
     for register in REGISTRARS:

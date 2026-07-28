@@ -120,6 +120,14 @@ Sound effects and soundtracks
 
 ---
 
+# Development Notes (this repo's codebase)
+- `alembic.ini` and `migrations/` live inside the package at
+  `src/rpg_librarian_mcp/alembic/`, not at the repo root — they're bundled
+  there so migrations work post-install (PyPI/`pipx`), not just from a source
+  checkout. Any `alembic` CLI invocation needs `-c
+  src/rpg_librarian_mcp/alembic/alembic.ini` explicitly; running bare `alembic
+  ...` from the repo root will not find the config.
+
 # Other Important File Locations
 - c:\proj\rpg-librarian: The old version of this project, we will be moving code from there into this mcp-first archirecture in this directory
 - c:\rpg: This is the location of our current rpg digital archive

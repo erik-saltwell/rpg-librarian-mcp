@@ -7,7 +7,7 @@ from typing import Annotated, Any
 
 from pydantic import StringConstraints
 from sqlalchemy import TypeDecorator
-from sqlmodel import Field, SQLModel, String
+from sqlmodel import DateTime, Field, SQLModel, String
 
 
 def utc_now() -> datetime:
@@ -36,6 +36,25 @@ def validate_filename(filename: str) -> None:
 
     if not PurePosixPath(filename).suffix:
         raise ValueError("filename must include an extension")
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    """Store/retrieve datetimes as UTC-aware, regardless of SQLite's naive storage."""
+
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError("naive datetime passed to UTCDateTime column")
+        return value.astimezone(UTC).replace(tzinfo=None)  # store naive UTC
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        return value.replace(tzinfo=UTC)  # reattach UTC on the way out
 
 
 class ParentPathType(TypeDecorator[Path]):
@@ -72,10 +91,15 @@ class EntityBase(SQLModel):
         default_factory=uuid.uuid4,
         primary_key=True,
     )
-    created_at: datetime = Field(default_factory=utc_now)
+
+    created_at: datetime = Field(
+        default_factory=utc_now,
+        sa_type=UTCDateTime,
+    )
 
     updated_at: datetime = Field(
         default_factory=utc_now,
+        sa_type=UTCDateTime,
         sa_column_kwargs={"onupdate": utc_now},
     )
 

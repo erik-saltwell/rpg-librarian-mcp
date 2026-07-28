@@ -6,9 +6,11 @@ from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
 
 from rpg_librarian_mcp import model  # noqa: F401
+from rpg_librarian_mcp.catalog import load_env
 
 config = context.config
 
+load_env()
 database_url = os.getenv("DATABASE_URL")
 
 if database_url:

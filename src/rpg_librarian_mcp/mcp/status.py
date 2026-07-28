@@ -5,10 +5,10 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 from .. import __version__
-from ..config import Config
+from ..catalog import Catalog
 
 
-def register(mcp: FastMCP, config: Config) -> None:
+def register(mcp: FastMCP, config: Catalog) -> None:
     @mcp.tool
     def librarian_status() -> dict[str, object]:
         """Report the server version and the library it is pointed at."""

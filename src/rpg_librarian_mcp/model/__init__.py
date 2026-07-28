@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .Entity import Entry
+from .Entry import Entry
 from .Error import Error
 
 __all__ = [

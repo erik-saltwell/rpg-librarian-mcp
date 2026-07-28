@@ -37,11 +37,15 @@ def main() -> int:
 
         try:
             # Build a fresh database using only migration files.
+            alembic_ini = "src/rpg_librarian_mcp/alembic/alembic.ini"
+
             run_command(
                 [
                     "uv",
                     "run",
                     "alembic",
+                    "-c",
+                    alembic_ini,
                     "upgrade",
                     "head",
                 ],
@@ -54,6 +58,8 @@ def main() -> int:
                     "uv",
                     "run",
                     "alembic",
+                    "-c",
+                    alembic_ini,
                     "check",
                 ],
                 env=environment,
