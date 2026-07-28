@@ -34,3 +34,11 @@ def walk_filesystem(starting_path: Path, recurse: bool) -> Generator[Path]:
                 if path.is_dir() and not is_filtered(path)
             ):
                 yield from walk_filesystem(dir, recurse)
+
+
+def walk_directories(starting_path: Path) -> Generator[Path]:
+    """Yield every directory under `starting_path`, recursively (not itself)."""
+    for path in sorted(starting_path.iterdir()):
+        if path.is_dir() and not is_filtered(path):
+            yield path
+            yield from walk_directories(path)

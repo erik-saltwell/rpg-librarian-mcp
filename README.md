@@ -18,7 +18,11 @@ src/rpg_librarian_mcp/
     init.py      REGISTRARS list -- add new tool modules here
     status.py        librarian_status
     update_catalog.py
-  tools/              small stateless helpers (hashing, mime detection, path resolution)
+    directory_status.py  list_directory_entries, summarize_directories
+    errors.py            list_errors
+    readonly_query.py     run_readonly_query, get_catalog_schema
+    move.py               move
+  tools/              small stateless helpers (hashing, mime detection, path resolution, entry queries)
 tests/
 
 Adding a tool group: create `mcp/<name>.py` with

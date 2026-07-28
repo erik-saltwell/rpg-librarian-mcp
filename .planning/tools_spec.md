@@ -7,12 +7,12 @@ still needs to be done, and pick a next step.
 | Tool | Status |
 | --- | --- |
 | `update_catalog` | complete |
-| `list_directory_entries` | unstarted |
-| `summarize_directories` | unstarted |
-| `list_errors` | unstarted |
-| `run_readonly_query` | unstarted |
-| `get_catalog_schema` | unstarted |
-| `move` | unstarted |
+| `list_directory_entries` | complete |
+| `summarize_directories` | complete |
+| `list_errors` | complete |
+| `run_readonly_query` | complete |
+| `get_catalog_schema` | complete |
+| `move` | complete |
 
 ## Tool 0 — `update_catalog(path, process_recursively=False, force=False)`
 
@@ -49,20 +49,41 @@ Response shape (from `UpdateCatalogResult`, `commands/UpdateCatalogCommand.py:54
 
 ## Read/status tools — design
 
-**Status: unstarted** for all three tools below. Design only, not
-implemented. Three tools: per-directory file listing, recursive
-per-directory counts, and error listing.
+**Status: complete** for all three tools below, implemented in
+`mcp/directory_status.py` (tools 1-2) and `mcp/errors.py` (tool 3). One
+cross-cutting fix discovered during implementation: `ParentPathType`'s bind
+validation (`model/core.py`) rejects any `parent_path` with fewer than two
+parts on *every* bind, including `WHERE` clauses — not just inserts. A
+non-recursive query against a shallow path (e.g. `"books"`) would otherwise
+crash instead of returning an empty result. `tools/entry_queries.py` adds
+`entries_by_parent`/`entry_by_exact_path` helpers that skip the bind
+entirely for depth-&lt;2 paths (returning empty/`None`), since no real
+`Entry` can have such a `parent_path` anyway. Used by tool 1's non-recursive
+branch and by `move`'s file-lookup branch.
 
-## Prerequisite: `product_id` does not exist yet
+`summarize_directories`'s directory-count aggregation ended up done
+Python-side (iterate all `Entry` rows, group by `parent_path` in a dict)
+rather than the spec's SQL `GROUP BY` with conditional `SUM(CASE ...)` —
+`ty` couldn't resolve the SQLAlchemy `case`/`func.sum` overloads against
+`sqlmodel`'s typed `select()`, and the Python-side scan matches the
+full-table-scan precedent `UpdateCatalogCommand` already uses for deletion
+reconciliation. Same performance trade-off, not a correctness change.
 
-`Entry` (`model/Entry.py`) currently has no product-identification field —
-just `id`, `parent_path`, `filename`, `sha256`, `size_in_bytes`, `mime_type`,
-`media_type`. Product identification is listed as not-started work in
-`work_remaining.md` (no ISBN/enrichment tooling exists yet).
+`list_directory_entries` adds one field beyond the original response shape:
+each file also carries `"cataloged": bool`, distinguishing "never scanned"
+from "scanned, no product yet" — both would otherwise show `has_product:
+false` indistinguishably, which is the same ambiguity the "never-scanned
+directories" resolution (bottom of this doc) called out for
+`summarize_directories`.
 
-This design assumes `product_id: uuid.UUID | None` gets added to `Entry` as
-a prerequisite schema change (its own migration, not part of this design).
-Flagging this as a dependency, not resolving it here.
+## Prerequisite: `product_id` — done
+
+`Entry` (`model/Entry.py:38`) now has `product_id: uuid.UUID | None`, a
+foreign key to the new `Product` table (`model/Product.py`), added via
+migration `454ae90a7155_add_product_id_fk_to_entry.py`. `Entry` also already
+exposes a `has_product` property (`model/Entry.py:72`,
+`self.product_id is not None`) — the exact field tool 1 needs per-file.
+Prerequisite for tools 1–2 is resolved.
 
 ## Architecture pattern: skip `CommandProtocol`, follow `status.py` instead
 
@@ -77,7 +98,7 @@ helper, no Command class, no `ctx` needed since there's nothing to report.
 
 ## Tool 1 — `list_directory_entries(path, recursive=False)`
 
-**Status: unstarted.**
+**Status: complete.** See implementation notes above.
 
 Lists files directly in `path` (or its subtree if `recursive=True`), each
 flagged with product-identification status.
@@ -92,8 +113,9 @@ Response shape:
 {
   "path": "books/Systems/Call of Cthulhu",
   "files": [
-    {"filename": "Keeper Rulebook.pdf", "media_type": "pdf", "has_product": true},
-    {"filename": "scan_042.pdf", "media_type": "pdf", "has_product": false}
+    {"filename": "Keeper Rulebook.pdf", "media_type": "pdf", "cataloged": true, "has_product": true},
+    {"filename": "scan_042.pdf", "media_type": "pdf", "cataloged": true, "has_product": false},
+    {"filename": "never_scanned.pdf", "media_type": null, "cataloged": false, "has_product": false}
   ],
   "count": 2,
   "with_product": 1,
@@ -116,16 +138,20 @@ Response shape:
   files. Flagging, not resolving, since actual limits depend on real usage
   patterns not yet observed.
 
-## Tool 2 — `summarize_directories(path, include_complete=False)`
+## Tool 2 — `summarize_directories(path, include_complete=False, limit=100)`
 
-**Status: unstarted.**
+**Status: complete.** See implementation notes above. `limit` was added by
+the "Resolved" section at the bottom of this doc (cap-and-flag, no
+pagination) and is reflected in the signature and response shape here.
 
 The "what's left to do" overview: one row per directory under `path`, counts
 only — not per-file detail (that's tool 1's job for a specific directory
 once the LLM has picked one).
 
 ```python
-def summarize_directories(path: Path, include_complete: bool = False) -> dict[str, object]:
+def summarize_directories(
+    path: Path, include_complete: bool = False, limit: int = 100
+) -> dict[str, object]:
     """Per-directory product-identification counts, recursively under `path`."""
 ```
 
@@ -134,10 +160,12 @@ Response shape:
 {
   "path": "books",
   "directories": [
-    {"path": "books/Systems/Shadowrun", "with_product": 4, "without_product": 19},
-    {"path": "books/Generic/Adventures", "with_product": 12, "without_product": 0}
+    {"path": "books/Systems/Shadowrun", "scanned": true, "with_product": 4, "without_product": 19},
+    {"path": "books/Generic/Adventures", "scanned": true, "with_product": 12, "without_product": 0},
+    {"path": "books/Systems/Unscanned", "scanned": false, "with_product": 0, "without_product": 0}
   ],
-  "total_directories": 2
+  "total_directories": 3,
+  "truncated": false
 }
 ```
 
@@ -165,7 +193,11 @@ Response shape:
 
 ## Tool 3 — `list_errors(path=None, stage=None)`
 
-**Status: unstarted.**
+**Status: complete.** Implemented in `mcp/errors.py`. `occurred_at` is
+serialized with `.isoformat()` explicitly — `Error.occurred_at` (unlike
+`Entry`'s timestamps) has no `sa_type=UTCDateTime`, so it comes back naive
+rather than UTC-aware; explicit serialization sidesteps relying on that
+distinction leaking into the response.
 
 ```python
 def list_errors(path: Path | None = None, stage: ErrorStage | None = None) -> dict[str, object]:
@@ -194,7 +226,11 @@ Response shape:
 
 ## Escape-hatch tools: `run_readonly_query` and `get_catalog_schema`
 
-**Status: unstarted** for both tools below. Design only, not implemented.
+**Status: complete** for both tools below. Implemented in
+`mcp/readonly_query.py`, using `readonly_connection` in `db.py` exactly as
+specced (`catalog.db_path.as_uri() + "?mode=ro"` rather than manual
+`f"file:{...}"` string-building, so library-root paths containing spaces or
+`?`/`#` don't break the URI).
 
 Goal: let the LLM run ad-hoc queries against `.catalog/catalog.db` for
 anything not covered by a purpose-built tool above, without any risk of
@@ -309,7 +345,16 @@ Response shape:
 
 ## Tool 6 — `move(source, destination)`
 
-**Status: unstarted.** Design only, not implemented.
+**Status: complete.** Implemented in `mcp/move.py`. One addition beyond the
+original design: `destination` depth is validated *before* any disk or DB
+change (same "reject early" principle the design already applies to
+existing-destination and missing-source checks). This is required by the
+same `ParentPathType` depth-&lt;2 bind rejection noted above — a folder
+moved to a top-level destination, or a file moved to a depth-&lt;2
+destination, can never be represented as a valid `Entry.parent_path`.
+Without this check the rejection would otherwise surface at
+`session.commit()`, *after* step 4's disk rename had already succeeded,
+inverting the spec's "unreliable step happens last" ordering guarantee.
 
 Moves a file or folder from one location to another, both places inside the
 library root. Both the filesystem and the catalog are updated so they never
@@ -375,6 +420,15 @@ different collision policies:
 
 `source == destination` is automatically rejected by this same rule, since
 the destination trivially "already exists."
+
+**Implementation note:** the disk-existence check turned out not to be the
+whole story. A stale `Entry` row can exist at a path with no file on disk
+(disk/catalog drift — the condition `update_catalog`'s deletion
+reconciliation exists to repair). Writing over that row would violate
+`Entry`'s `UniqueConstraint("parent_path", "filename")` at commit time,
+which is *after* the rename in the ordering below — so this is checked
+up front too, alongside the disk-existence and depth checks, not left to
+surface at commit.
 
 ### Ordering: DB update before disk move, disk move before commit
 

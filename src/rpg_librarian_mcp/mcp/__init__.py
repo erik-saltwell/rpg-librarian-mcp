@@ -11,11 +11,18 @@ from collections.abc import Callable, Sequence
 from fastmcp import FastMCP
 
 from ..catalog import Catalog
-from . import status, update_catalog
+from . import directory_status, errors, move, readonly_query, status, update_catalog
 
 Registrar = Callable[[FastMCP, Catalog], None]
 
-REGISTRARS: Sequence[Registrar] = (status.register, update_catalog.register)
+REGISTRARS: Sequence[Registrar] = (
+    status.register,
+    update_catalog.register,
+    directory_status.register,
+    errors.register,
+    readonly_query.register,
+    move.register,
+)
 
 __all__ = [
     "REGISTRARS",

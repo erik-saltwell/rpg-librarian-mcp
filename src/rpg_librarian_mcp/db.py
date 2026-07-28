@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 from importlib import resources
@@ -57,3 +58,15 @@ def session_scope(catalog: Catalog) -> Generator[Session]:
         except Exception:
             session.rollback()
             raise
+
+
+@contextmanager
+def readonly_connection(catalog: Catalog) -> Generator[sqlite3.Connection]:
+    """A connection to the catalog db that SQLite itself refuses to write through."""
+    ensure_bootstrapped(catalog)
+    uri = f"{catalog.db_path.as_uri()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        yield conn
+    finally:
+        conn.close()
