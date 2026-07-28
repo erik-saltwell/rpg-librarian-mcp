@@ -40,13 +40,19 @@ def test_migrate_existing_raises_when_catalog_missing(tmp_path):
         migrate_existing(catalog)
 
 
+def _head_revision(tmp_path) -> str:
+    reference_db_path = tmp_path / "reference.db"
+    _stamp_at_revision(reference_db_path, "head")
+    return _current_revision(reference_db_path)
+
+
 def test_migrate_existing_is_noop_when_already_at_head(tmp_path):
     catalog = _catalog(tmp_path)
     _stamp_at_revision(catalog.db_path, "head")
 
     migrate_existing(catalog)
 
-    assert _current_revision(catalog.db_path) == "f27fa1d64492"
+    assert _current_revision(catalog.db_path) == _head_revision(tmp_path)
 
 
 def test_migrate_existing_upgrades_a_stale_catalog(tmp_path):
@@ -56,4 +62,4 @@ def test_migrate_existing_upgrades_a_stale_catalog(tmp_path):
 
     migrate_existing(catalog)
 
-    assert _current_revision(catalog.db_path) == "f27fa1d64492"
+    assert _current_revision(catalog.db_path) == _head_revision(tmp_path)
