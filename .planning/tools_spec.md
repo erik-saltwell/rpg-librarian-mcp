@@ -13,6 +13,7 @@ still needs to be done, and pick a next step.
 | `run_readonly_query` | complete |
 | `get_catalog_schema` | complete |
 | `move` | complete |
+| `read_pdfs` | complete |
 
 ## Tool 0 — `update_catalog(path, process_recursively=False, force=False)`
 
@@ -504,6 +505,49 @@ convention as `run_readonly_query`'s "a bad query is a single all-or-nothing
 failure" reasoning. `move` is likewise all-or-nothing: there is no
 per-child partial-failure case left to report structurally once folder
 merge is rejected.
+
+## Tool 7 — `read_pdfs(path, process_recursively=False, force=False)`
+
+**Status: complete.** Implemented per the design in
+`.planning/read_pdf_spec.md`, reached via brainstorm on 2026-07-30.
+`mcp/read_pdfs.py`, `commands/ReadPdfsCommand.py`, `tools/barcode.py`,
+`tools/text_extraction.py`, `tools/ocr.py`, `tools/pdf_rendering.py`,
+`llm/settings.py`, `llm/pdf_judgment.py`, model `PdfContents`, migration
+`592aeb22d8d0`.
+
+One addition beyond the original design: `UpdateBaseCommand` gained a
+`fatal_exceptions: ClassVar[tuple[type[BaseException], ...]]` hook (default
+`()`, no behavior change for existing subclasses) so `ReadPdfsCommand` can
+mark `litellm.AuthenticationError`/`RateLimitError` as run-aborting instead
+of per-entry -- the base class's per-entry try/except had no prior concept
+of a exception that should propagate rather than being recorded as an
+`Error` row.
+
+```python
+async def read_pdfs(
+    path: Path,
+    ctx: Context,
+    process_recursively: bool = False,
+    force: bool = False,
+) -> dict[str, object]:
+    """Extract barcode/ISBN/ISSN/sample-text/LLM-derived signal from PDFs."""
+```
+
+Same signature shape and response shape (`UpdateResult._asdict()` plus
+`errors`) as `update_metadata`, built on `UpdateBaseCommand` via a new
+`ReadPdfsCommand`. Unlike `update_metadata`, this tool is PDF-only —
+non-PDF entries are silently `skipped`, not errored.
+
+Produces a new raw, per-source table `PdfContents` (0..1 on `Entry`,
+`entry_id`-keyed, upserted in place — same shape as `PdfMetadata`), and
+**removes** the `barcode`/`isbn`/`issn`/`sampled_text` columns from
+`PdfMetadata`, which were unpopulated placeholders for this exact feature.
+
+See `read_pdf_spec.md` for the full design: page-sampling/dedup, barcode →
+ISBN/ISSN resolution order, OCR via `pytesseract`, LLM-derived
+`description`/`possible_system` via `litellm` with structured output, error
+classification (per-entry vs. hard-fail), and the checked-in LLM settings
+file.
 
 ## Resolved: never-scanned directories and result caps
 

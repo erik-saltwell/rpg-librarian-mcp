@@ -1,0 +1,6 @@
+# LLM model used for read_pdfs's description/possible_system judgment.
+#
+# Checked into the repo, unlike provider API keys (which stay in .env and
+# are read directly by litellm from its own standard env vars, e.g.
+# OPENAI_API_KEY/ANTHROPIC_API_KEY). See README.md's "Running" section.
+model: gpt-5.6-luna

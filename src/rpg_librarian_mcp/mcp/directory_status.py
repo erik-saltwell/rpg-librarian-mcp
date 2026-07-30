@@ -17,15 +17,24 @@ from ..tools.path_helper import walk_directories, walk_filesystem
 def list_directory_entries(
     catalog: Catalog, path: Path, recursive: bool = False
 ) -> dict[str, object]:
-    """Files in `path`, each showing whether a product has been identified."""
+    """Files in `path`, each showing whether a product has been identified.
+
+    If `path` is itself a file, returns a single-entry listing for that file.
+    """
     relative_path = catalog.to_relative(path)
     absolute_path = catalog.to_absolute(relative_path)
 
+    # Entry.parent_path is keyed by directory, not by the entry's own path --
+    # for a file target, entries must be looked up under its *parent*
+    # directory, or the query for entries under "the file's path" (never a
+    # real parent_path) always comes back empty.
+    query_path = relative_path.parent if absolute_path.is_file() else relative_path
+
     with session_scope(catalog) as session:
         if recursive:
-            entries = entries_under(session, relative_path)
+            entries = entries_under(session, query_path)
         else:
-            entries = entries_by_parent(session, relative_path)
+            entries = entries_by_parent(session, query_path)
         by_path = {entry.path: entry for entry in entries}
 
         files = []
@@ -88,10 +97,18 @@ def summarize_directories(
         raise ValueError(f"limit must be a positive integer, got {limit}")
     relative_path = catalog.to_relative(path)
     absolute_path = catalog.to_absolute(relative_path)
+    if absolute_path.is_file():
+        raise ValueError(f"{path} is a file, not a directory")
     effective_limit = min(limit, 1000)
 
     with session_scope(catalog) as session:
         scanned_counts = _grouped_counts_by_directory(session, relative_path)
+
+    # A path can be legitimately summarized even if it's missing on disk --
+    # the catalog may hold entries scanned before the directory was later
+    # removed. Only reject a path neither on disk nor known to the catalog.
+    if not absolute_path.exists() and not scanned_counts:
+        raise ValueError(f"{path} does not exist")
 
     # Grouped keys come straight from stored parent_path values, which can
     # in principle include a depth-<2 path planted outside the app's own
@@ -152,12 +169,19 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
     def list_directory_entries_tool(
         path: Path, recursive: bool = False
     ) -> dict[str, object]:
-        """Files in `path`, each showing whether a product has been identified."""
+        """Files in `path`, each showing whether a product has been identified.
+
+        `path` must be an absolute path. If `path` is itself a file, returns
+        a single-entry listing for that file.
+        """
         return list_directory_entries(catalog, path, recursive)
 
     @mcp.tool(name="summarize_directories")
     def summarize_directories_tool(
         path: Path, include_complete: bool = False, limit: int = 100
     ) -> dict[str, object]:
-        """Per-directory product-identification counts, recursively under `path`."""
+        """Per-directory product-identification counts, recursively under `path`.
+
+        `path` must be an absolute path to a directory.
+        """
         return summarize_directories(catalog, path, include_complete, limit)

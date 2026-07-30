@@ -187,6 +187,19 @@ def test_move_rejects_file_to_top_level_destination(tmp_path):
     assert (tmp_path / "shelf" / "box" / "book.txt").exists()
 
 
+def test_move_rejects_folder_into_its_own_subdirectory(tmp_path):
+    """Bug: moving a folder into a new subdirectory of itself raised a raw
+    OS-level [Errno 22] from Path.rename instead of a clean ValueError like
+    every other rejected move."""
+    catalog = _catalog(tmp_path)
+    _write_file(tmp_path, "shelf/box/book.txt")
+
+    with pytest.raises(ValueError, match="own subdirectory"):
+        move(catalog, tmp_path / "shelf" / "box", tmp_path / "shelf" / "box" / "sub")
+
+    assert (tmp_path / "shelf" / "box" / "book.txt").exists()
+
+
 def test_move_failed_rename_leaves_catalog_unchanged(tmp_path, monkeypatch):
     catalog = _catalog(tmp_path)
     _write_file(tmp_path, "shelf/box/book.txt")

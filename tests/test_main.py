@@ -1,6 +1,5 @@
 from importlib import resources
 
-import pytest
 from alembic import command
 from alembic.config import Config
 
@@ -18,15 +17,17 @@ def _bootstrap_catalog(tmp_path) -> None:
         command.upgrade(cfg, "head")
 
 
-def test_migrate_flag_exits_cleanly_when_no_catalog(tmp_path, monkeypatch):
+def test_migrate_flag_bootstraps_a_fresh_directory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["rpg-librarian-mcp", "--migrate"])
 
-    with pytest.raises(SystemExit) as exc_info:
-        main()
+    main()  # should not raise
 
-    assert exc_info.value.code != 0
-    assert "No catalog found" in str(exc_info.value)
+    assert (tmp_path / ".catalog" / "catalog.db").exists()
+    assert (tmp_path / "claude.md").exists()
+    assert (
+        tmp_path / ".claude" / "skills" / "rpg-librarian-mcp-test" / "SKILL.md"
+    ).exists()
 
 
 def test_migrate_flag_succeeds_for_existing_catalog(tmp_path, monkeypatch):

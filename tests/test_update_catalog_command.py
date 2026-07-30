@@ -260,6 +260,41 @@ async def test_progress_reporting_is_throttled_by_percentage(tmp_path):
     assert ctx.report_progress.call_count < file_count
 
 
+async def test_root_level_file_is_reported_as_error_not_a_crash(tmp_path):
+    """Bug: a supported file placed directly in the library root (parent_path
+    depth < 2) crashed the whole recursive scan with a raw ValueError from
+    ParentPathType's bind-time validation, instead of being reported as a
+    per-file error like `move` reports the same constraint."""
+    (tmp_path / "roottest.txt").write_text("hello world")
+    _make_book(tmp_path)
+    catalog = _catalog(tmp_path)
+    command = UpdateCatalogCommand(catalog)
+
+    result = await command.process(tmp_path, True, False, AsyncMock())
+
+    assert result.errored == 1
+    assert result.successfully_processed == 1
+    assert "roottest.txt" in result.errors[0].reason
+    assert "too shallow to be cataloged" in result.errors[0].reason
+
+    with session_scope(catalog) as session:
+        entries = session.exec(select(Entry)).all()
+        assert [e.filename for e in entries] == ["book.txt"]
+
+
+async def test_root_level_file_single_file_call_reports_clean_error(tmp_path):
+    file_path = tmp_path / "roottest.txt"
+    file_path.write_text("hello world")
+    catalog = _catalog(tmp_path)
+    command = UpdateCatalogCommand(catalog)
+
+    result = await command.process(file_path, False, False, AsyncMock())
+
+    assert result.errored == 1
+    assert result.successfully_processed == 0
+    assert "too shallow to be cataloged" in result.errors[0].reason
+
+
 async def test_directory_mode_survives_unrelated_bad_media_type(poisoned_catalog):
     """Bug 1: the removal-reconciliation loop's full-table scan must not
     crash on an out-of-scope row with an invalid media_type."""

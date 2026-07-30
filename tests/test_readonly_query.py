@@ -87,6 +87,16 @@ def test_run_readonly_query_allows_semicolon_inside_string_literal(tmp_path):
     assert result["rows"] == [["a;b"]]
 
 
+def test_run_readonly_query_surfaces_sql_syntax_error_for_typo(tmp_path):
+    """Bug: a typo'd keyword (e.g. SELEKT) got the generic "not allowed"
+    message instead of a real SQL syntax error, since the allow-list check
+    is a naive prefix match performed before any real parsing."""
+    catalog = _catalog(tmp_path)
+
+    with pytest.raises(Exception, match="syntax error"):
+        run_readonly_query(catalog, "SELEKT * FROM entry")
+
+
 def test_run_readonly_query_cannot_write(tmp_path):
     catalog = _catalog(tmp_path)
 
@@ -141,6 +151,17 @@ def test_get_catalog_schema_returns_domain_tables_only(tmp_path):
     result = get_catalog_schema(catalog)
 
     names = {table["name"] for table in result["tables"]}
-    assert names == {"entry", "error", "product"}
+    assert names == {
+        "entry",
+        "error",
+        "product",
+        "filemetadata",
+        "pdfmetadata",
+        "pdfcontents",
+        "meshmetadata",
+        "audiometadata",
+        "imagemetadata",
+        "videometadata",
+    }
     for table in result["tables"]:
         assert "CREATE TABLE" in table["sql"]

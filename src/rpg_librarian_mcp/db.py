@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -26,20 +27,71 @@ def _setup_db(db_path: Path) -> None:
     _run_alembic_upgrade(db_path)
 
 
+def _create_default_claude_md(library_root: Path) -> None:
+    """Seed a starter claude.md in the library root, if one isn't already there.
+
+    Never overwrites an existing file -- this only fills in a brand-new
+    library's missing default, it's not a template to keep in sync.
+    """
+    claude_md_path = library_root / "claude.md"
+    if claude_md_path.exists():
+        return
+    resource = resources.files("rpg_librarian_mcp") / "resources" / "claude.md"
+    claude_md_path.write_text(resource.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+def _deploy_skills(library_root: Path, *, overwrite: bool) -> None:
+    """Copy every packaged skill directory into the library's .claude/skills/.
+
+    Skills to deploy are discovered by listing resources/skills/ -- adding a
+    new skill to the package is just adding a new subdirectory there, no
+    registration needed.
+
+    With overwrite=False, a skill already present in the library is left
+    alone (first-time seed). With overwrite=True, each bundled skill's
+    directory is wiped and replaced wholesale, so stale/renamed files from an
+    older packaged version don't linger; directories that don't correspond to
+    a currently-packaged skill (a user's own custom skill) are never touched.
+    """
+    skills_dir = resources.files("rpg_librarian_mcp") / "resources" / "skills"
+    with resources.as_file(skills_dir) as packaged_skills_path:
+        if not packaged_skills_path.is_dir():
+            return
+        target_root = library_root / ".claude" / "skills"
+        for packaged_skill in sorted(packaged_skills_path.iterdir()):
+            if not packaged_skill.is_dir():
+                continue
+            target_skill = target_root / packaged_skill.name
+            if target_skill.exists():
+                if not overwrite:
+                    continue
+                shutil.rmtree(target_skill)
+            target_skill.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(packaged_skill, target_skill)
+
+
 def ensure_bootstrapped(catalog: Catalog) -> None:
     if not catalog.catalog_dir.exists():
         catalog.catalog_dir.mkdir(parents=True)
+        _create_default_claude_md(catalog.library_root)
+        _deploy_skills(catalog.library_root, overwrite=False)
     if not catalog.db_path.exists():
         _setup_db(catalog.db_path)
 
 
 def migrate_existing(catalog: Catalog) -> None:
-    """Explicit upgrade path for an existing catalog after a schema-changing release."""
-    if not catalog.db_path.exists():
-        raise RuntimeError(
-            f"No catalog found at {catalog.db_path} -- nothing to migrate. "
-            "Run the server once first to create a new catalog."
-        )
+    """Explicit sync path: bring the current directory fully up to date.
+
+    Creates anything missing (.catalog, claude.md, the db) just like a first
+    run would, then force-syncs claude.md and every packaged skill to the
+    currently installed version, and upgrades the schema to head.
+    """
+    ensure_bootstrapped(catalog)
+    resource = resources.files("rpg_librarian_mcp") / "resources" / "claude.md"
+    (catalog.library_root / "claude.md").write_text(
+        resource.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    _deploy_skills(catalog.library_root, overwrite=True)
     _run_alembic_upgrade(catalog.db_path)
 
 

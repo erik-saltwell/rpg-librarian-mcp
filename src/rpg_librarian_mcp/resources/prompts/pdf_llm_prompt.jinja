@@ -1,0 +1,15 @@
+You are analyzing sampled page text from an RPG (tabletop role-playing game)
+PDF to answer two questions about it.
+
+Sampled page text (JSON, keyed by page number):
+{{ sample_text }}
+
+Answer with:
+
+- `description`: if the text includes a description of what this PDF is,
+  summarize it in a few sentences. Otherwise leave this blank.
+- `possible_system`: the specific RPG system this PDF is intended for, if you
+  can determine one (e.g. "Dungeons & Dragons 5th Edition", "Call of
+  Cthulhu"). If the PDF is clearly system-agnostic (usable with any RPG
+  system), use exactly "{{ agnostic_sentinel }}". If you do not have high
+  confidence in either answer, use exactly "{{ unknown_sentinel }}".

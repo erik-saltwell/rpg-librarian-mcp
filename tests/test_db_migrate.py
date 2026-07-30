@@ -1,6 +1,5 @@
 from importlib import resources
 
-import pytest
 from alembic import command
 from alembic.config import Config
 
@@ -33,11 +32,62 @@ def _current_revision(db_path) -> str:
         conn.close()
 
 
-def test_migrate_existing_raises_when_catalog_missing(tmp_path):
-    catalog = _catalog(tmp_path)
+def test_migrate_existing_bootstraps_when_catalog_missing(tmp_path):
+    catalog = Catalog(library_root=tmp_path)
 
-    with pytest.raises(RuntimeError):
-        migrate_existing(catalog)
+    migrate_existing(catalog)
+
+    assert catalog.db_path.exists()
+    assert (tmp_path / "claude.md").exists()
+    assert (
+        tmp_path / ".claude" / "skills" / "rpg-librarian-mcp-test" / "SKILL.md"
+    ).exists()
+
+
+def test_migrate_existing_overwrites_claude_md(tmp_path):
+    catalog = _catalog(tmp_path)
+    claude_md_path = tmp_path / "claude.md"
+    claude_md_path.write_text("stale content")
+
+    migrate_existing(catalog)
+
+    packaged = resources.files("rpg_librarian_mcp") / "resources" / "claude.md"
+    assert claude_md_path.read_text(encoding="utf-8") == packaged.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_migrate_existing_resyncs_a_stale_skill_file(tmp_path):
+    catalog = _catalog(tmp_path)
+    skill_dir = tmp_path / ".claude" / "skills" / "rpg-librarian-mcp-test"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("stale skill content")
+    (skill_dir / "stale_extra_file.md").write_text("should be removed")
+
+    migrate_existing(catalog)
+
+    packaged_skill_md = (
+        resources.files("rpg_librarian_mcp")
+        / "resources"
+        / "skills"
+        / "rpg-librarian-mcp-test"
+        / "SKILL.md"
+    )
+    assert (skill_dir / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == packaged_skill_md.read_text(encoding="utf-8")
+    assert not (skill_dir / "stale_extra_file.md").exists()
+
+
+def test_migrate_existing_does_not_touch_a_users_own_custom_skill(tmp_path):
+    catalog = _catalog(tmp_path)
+    custom_skill_dir = tmp_path / ".claude" / "skills" / "my-own-skill"
+    custom_skill_dir.mkdir(parents=True)
+    (custom_skill_dir / "SKILL.md").write_text("my own skill, do not touch")
+
+    migrate_existing(catalog)
+
+    assert (custom_skill_dir / "SKILL.md").read_text() == "my own skill, do not touch"
 
 
 def _head_revision(tmp_path) -> str:

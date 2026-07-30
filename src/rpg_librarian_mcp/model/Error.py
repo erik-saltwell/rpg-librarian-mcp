@@ -2,17 +2,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from enum import StrEnum, auto
 
 from sqlalchemy import Column, ForeignKey
 from sqlmodel import Field, SQLModel, String
 
 from ..utils.pydantic_aliases import NonEmptyStr
 from .core import utc_now
-
-
-class ErrorStage(StrEnum):
-    populate_file_data = auto()
+from .ProcessingStage import ProcessingStage
 
 
 class Error(SQLModel, table=True):
@@ -22,7 +18,7 @@ class Error(SQLModel, table=True):
             primary_key=True,
         ),
     )
-    stage: ErrorStage = Field(
+    stage: ProcessingStage = Field(
         sa_column=Column(String, primary_key=True),
     )
     error_text: NonEmptyStr

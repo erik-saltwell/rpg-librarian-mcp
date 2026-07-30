@@ -19,6 +19,8 @@ async def test_all_tools_are_registered():
         "run_readonly_query",
         "get_catalog_schema",
         "move",
+        "update_metadata",
+        "read_pdfs",
     }
 
 

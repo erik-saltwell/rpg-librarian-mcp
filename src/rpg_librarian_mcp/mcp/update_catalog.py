@@ -20,9 +20,10 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
     ) -> dict[str, object]:
         """Scan a file or directory and update the catalog to match it.
 
-        `path` may be a single file or a directory; directories are
-        non-recursive unless `process_recursively` is set. `force` bypasses
-        the "skip if unchanged" check and reprocesses every matched file.
+        `path` must be an absolute path, and may be a single file or a
+        directory; directories are non-recursive unless
+        `process_recursively` is set. `force` bypasses the "skip if
+        unchanged" check and reprocesses every matched file.
         """
         result = await command.process(path, process_recursively, force, ctx)
         return {**result._asdict(), "errors": [e._asdict() for e in result.errors]}

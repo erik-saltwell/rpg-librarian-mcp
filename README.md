@@ -12,8 +12,13 @@ src/rpg_librarian_mcp/
   alembic/
     alembic.ini      bundled into the package so migrations work post-install
     migrations/
-  model/             SQLModel tables (Entry, Error, MediaType)
+  resources/
+    claude.md          default claude.md seeded into a new library root
+    llm_settings.yaml   checked-in litellm model choice, read via importlib.resources
+    prompts/            bundled Jinja prompt templates (e.g. read_pdfs's LLM prompt)
+  model/             SQLModel tables (Entry, Error, MediaType, PdfContents, ...)
   commands/          CommandProtocol + per-tool business logic (UpdateCatalogCommand, ...)
+  llm/               litellm settings loader + PDF description/system judgment
   mcp/
     init.py      REGISTRARS list -- add new tool modules here
     status.py        librarian_status
@@ -22,7 +27,11 @@ src/rpg_librarian_mcp/
     errors.py            list_errors
     readonly_query.py     run_readonly_query, get_catalog_schema
     move.py               move
-  tools/              small stateless helpers (hashing, mime detection, path resolution, entry queries)
+    metadata.py           update_metadata
+    read_pdfs.py          read_pdfs
+  tools/              small stateless helpers (hashing, mime detection, path
+                       resolution, entry queries, barcode scanning, PDF text
+                       extraction, OCR)
 tests/
 
 Adding a tool group: create `mcp/<name>.py` with
@@ -57,6 +66,37 @@ auto-create path does. It's a safe no-op if the catalog is already at head,
 and exits with a clear error (instead of starting the server) if there's no
 catalog at this location yet.
 
+The same first-time bootstrap also seeds a starter `claude.md` in the
+library root, from a packaged default (`resources/claude.md`), if one isn't
+already there. An existing `claude.md` is never overwritten, and this only
+happens at the moment `.catalog` is first created — not on every run.
+
+### `read_pdfs`: Tesseract OCR
+
+`read_pdfs` OCRs scanned PDF pages via `pytesseract`, which wraps the
+Tesseract OCR **system binary** — this is not installed by `pip`/`uv sync`,
+you need it on `PATH` separately:
+
+- Debian/Ubuntu: `sudo apt install tesseract-ocr`
+- macOS (Homebrew): `brew install tesseract`
+- Windows: install from the
+  [Tesseract at UB Mannheim](https://github.com/UB-Mannheim/tesseract/wiki)
+  builds and ensure `tesseract.exe` is on `PATH`.
+
+If the binary is missing, `read_pdfs` fails immediately (before scanning any
+files) with a clear error, rather than failing once per scanned PDF.
+
+### `read_pdfs`: LLM provider credentials
+
+`read_pdfs` also asks an LLM (via `litellm`) to summarize a PDF's
+description and guess its RPG system from sampled page text. The **model
+choice** is checked into the repo (`resources/llm_settings.yaml`), but the
+**provider credentials** are not — set whichever API key your chosen model's
+provider needs (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) in your `.env`,
+following `litellm`'s own
+[provider docs](https://docs.litellm.ai/docs/providers) for the exact
+variable name. See `.env.example`.
+
 ## Running
 
 rpg-librarian-mcp
@@ -90,8 +130,19 @@ DATABASE_URL=sqlite:////home/you/data/rpgtest/.catalog/catalog.db
 
 `migrations/env.py` loads `.env` automatically (searching upward from wherever
 you run `alembic` from) before reading `DATABASE_URL` — no need to `source`
-or export it yourself. This is separate from the server itself, which always
-resolves its db from the library root (cwd), never from this variable.
+or export it yourself. The server's own bootstrap path (`db.py`) explicitly
+sets its target db to the library root's own `.catalog/catalog.db` before
+running migrations, so it does not *intend* to read this variable at all --
+but `env.py` unconditionally lets `DATABASE_URL` override whatever caller set,
+if the variable happens to be set. In normal server use this is harmless: a
+real library root elsewhere on disk won't have this repo's `.env` anywhere
+above it, so `find_dotenv` never finds one to load. It only bites if you
+invoke the server's bootstrap code (`ensure_bootstrapped`, `--migrate`) from
+somewhere `.env`'s `DATABASE_URL` *is* discoverable upward from cwd -- e.g.
+testing against a scratch library from within this checkout -- in which case
+that stray value silently wins over the library root you meant to target.
+Export `DATABASE_URL` yourself (real env vars aren't overridden by `.env`) if
+you need to rule this out.
 
 ### Running or authoring a migration
 

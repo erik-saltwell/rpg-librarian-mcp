@@ -104,6 +104,35 @@ class EntityBase(SQLModel):
     )
 
 
+class EntryMetadataBase(SQLModel):
+    """Base for raw, per-source metadata tables keyed one-to-(zero-or-one) on Entry.
+
+    `entry_id` is the primary key (not a separate generated id) -- each
+    source gets at most one row per entry, upserted in place on re-run. This
+    mirrors EntityBase's created_at/updated_at, but a row's identity is the
+    entry it describes, not an independent id.
+    """
+
+    entry_id: uuid.UUID | None = Field(
+        default=None,
+        foreign_key="entry.id",
+        nullable=False,
+        ondelete="CASCADE",
+        primary_key=True,
+    )
+
+    created_at: datetime = Field(
+        default_factory=utc_now,
+        sa_type=UTCDateTime,
+    )
+
+    updated_at: datetime = Field(
+        default_factory=utc_now,
+        sa_type=UTCDateTime,
+        sa_column_kwargs={"onupdate": utc_now},
+    )
+
+
 Sha256 = Annotated[
     str,
     StringConstraints(

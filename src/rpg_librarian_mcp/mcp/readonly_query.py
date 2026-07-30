@@ -7,7 +7,26 @@ from fastmcp import FastMCP
 from ..catalog import Catalog
 from ..db import readonly_connection
 
-_ALLOWED_LEADING_WORDS = ("SELECT", "WITH")
+_DISALLOWED_LEADING_WORDS = (
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "DROP",
+    "ALTER",
+    "CREATE",
+    "REPLACE",
+    "PRAGMA",
+    "ATTACH",
+    "DETACH",
+    "VACUUM",
+    "REINDEX",
+    "BEGIN",
+    "COMMIT",
+    "ROLLBACK",
+    "SAVEPOINT",
+    "RELEASE",
+    "ANALYZE",
+)
 _MAX_LIMIT = 500
 
 
@@ -42,7 +61,7 @@ def _validate_statement(sql: str) -> None:
     if not trimmed:
         raise ValueError("sql must not be empty")
     first_word = trimmed.split(None, 1)[0].upper()
-    if first_word not in _ALLOWED_LEADING_WORDS:
+    if first_word in _DISALLOWED_LEADING_WORDS:
         raise ValueError("only SELECT or WITH statements are allowed")
     if _has_disallowed_semicolon(trimmed):
         raise ValueError("only a single SQL statement is allowed")

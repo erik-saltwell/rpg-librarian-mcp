@@ -10,8 +10,8 @@ from sqlmodel import Session, select
 from ..catalog import Catalog
 from ..db import session_scope
 from ..model import Entry, Error
-from ..model.Error import ErrorStage
 from ..model.MediaType import MediaType
+from ..model.ProcessingStage import ProcessingStage
 from ..tools.entry_queries import entries_by_parent, entries_under
 from ..tools.media_type import detect_media_type, detect_mime_type
 from ..tools.path_helper import walk_filesystem
@@ -47,7 +47,7 @@ def _should_process_row(file_path: Path, existing: Entry | None, force: bool) ->
 
 
 def _clear_stale_error(session: Session, entry: Entry) -> None:
-    stale_error = session.get(Error, (entry.id, ErrorStage.populate_file_data))
+    stale_error = session.get(Error, (entry.id, ProcessingStage.populate_file_data))
     if stale_error is not None:
         session.delete(stale_error)
 
@@ -98,11 +98,11 @@ class UpdateCatalogCommand:
         if len(errors) < self.max_errors:
             errors.append(ProcessingError(path=entry_relative_path, reason=str(exc)))
 
-        error_row = session.get(Error, (entry.id, ErrorStage.populate_file_data))
+        error_row = session.get(Error, (entry.id, ProcessingStage.populate_file_data))
         if error_row is None:
             error_row = Error(
                 entry_id=entry.id,
-                stage=ErrorStage.populate_file_data,
+                stage=ProcessingStage.populate_file_data,
                 error_text=str(exc),
             )
         else:
@@ -129,43 +129,64 @@ class UpdateCatalogCommand:
                 parent_path = entry_relative_path.parent
                 filename = entry_relative_path.name
 
-                existing = session.exec(
-                    select(Entry).where(
-                        Entry.parent_path == parent_path,
-                        Entry.filename == filename,
-                    )
-                ).first()
-
-                should_process = _should_process_row(file_path, existing, force)
-
-                if not should_process:
-                    skipped += 1
+                if len(parent_path.parts) < 2:
+                    # A real Entry can never bind with a parent_path this
+                    # shallow (ParentPathType rejects it) -- reject up front
+                    # as a per-file error, the same as `move` does for the
+                    # same constraint, rather than letting the query below
+                    # raise and abort the whole batch.
+                    errored += 1
+                    if len(errors) < self.max_errors:
+                        errors.append(
+                            ProcessingError(
+                                path=entry_relative_path,
+                                reason=(
+                                    f"{entry_relative_path} is too shallow to be "
+                                    "cataloged (need at least a parent and "
+                                    "grandparent folder)"
+                                ),
+                            )
+                        )
                 else:
-                    try:
-                        fields = _compute_entry_fields(file_path)
-                    except Exception as exc:
-                        errored += 1
-                        error_target = existing or _create_stub_entry(
-                            session, parent_path, filename
+                    existing = session.exec(
+                        select(Entry).where(
+                            Entry.parent_path == parent_path,
+                            Entry.filename == filename,
                         )
-                        self._record_error(
-                            session, error_target, entry_relative_path, exc, errors
-                        )
+                    ).first()
+
+                    should_process = _should_process_row(file_path, existing, force)
+
+                    if not should_process:
+                        skipped += 1
                     else:
-                        successfully_processed += 1
-                        if existing is None:
-                            entry = Entry(
-                                parent_path=parent_path, filename=filename, **fields
+                        try:
+                            fields = _compute_entry_fields(file_path)
+                        except Exception as exc:
+                            errored += 1
+                            error_target = existing or _create_stub_entry(
+                                session, parent_path, filename
+                            )
+                            self._record_error(
+                                session, error_target, entry_relative_path, exc, errors
                             )
                         else:
-                            for key, value in fields.items():
-                                setattr(existing, key, value)
-                            entry = existing
-                        session.add(entry)
-                        session.flush()
-                        _clear_stale_error(session, entry)
+                            successfully_processed += 1
+                            if existing is None:
+                                entry = Entry(
+                                    parent_path=parent_path,
+                                    filename=filename,
+                                    **fields,
+                                )
+                            else:
+                                for key, value in fields.items():
+                                    setattr(existing, key, value)
+                                entry = existing
+                            session.add(entry)
+                            session.flush()
+                            _clear_stale_error(session, entry)
 
-                    session.commit()  # Stage 6 — per file, not batched
+                        session.commit()  # Stage 6 — per file, not batched
 
                 percent = (index + 1) * 100 // total if total else 100
                 if percent != last_reported_percent:

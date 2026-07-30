@@ -10,14 +10,18 @@ from sqlmodel import select
 from ..catalog import Catalog
 from ..db import session_scope
 from ..model import Entry, Error
-from ..model.Error import ErrorStage
+from ..model.ProcessingStage import ProcessingStage
 
 
 def list_errors(
-    catalog: Catalog, path: Path | None = None, stage: ErrorStage | None = None
+    catalog: Catalog, path: Path | None = None, stage: ProcessingStage | None = None
 ) -> dict[str, object]:
     """All recorded errors, optionally scoped to a directory subtree or a stage."""
-    relative_path = catalog.to_relative(path) if path is not None else None
+    relative_path: Path | None = None
+    if path is not None:
+        relative_path = catalog.to_relative(path)
+        if not catalog.to_absolute(relative_path).exists():
+            raise ValueError(f"{path} does not exist")
 
     stmt = select(Error, Entry).join(Entry)
     if stage is not None:
@@ -46,7 +50,10 @@ def list_errors(
 def register(mcp: FastMCP, catalog: Catalog) -> None:
     @mcp.tool(name="list_errors")
     def list_errors_tool(
-        path: Path | None = None, stage: ErrorStage | None = None
+        path: Path | None = None, stage: ProcessingStage | None = None
     ) -> dict[str, object]:
-        """All recorded errors, optionally scoped to a directory subtree or a stage."""
+        """All recorded errors, optionally scoped to a directory subtree or a stage.
+
+        `path`, if given, must be an absolute path.
+        """
         return list_errors(catalog, path, stage)

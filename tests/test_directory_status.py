@@ -12,7 +12,7 @@ from rpg_librarian_mcp.mcp.directory_status import (
 from rpg_librarian_mcp.mcp.directory_status import (
     summarize_directories as _summarize_directories,
 )
-from rpg_librarian_mcp.model import Entry, Product
+from rpg_librarian_mcp.model import Entry, IdentificationMethod, Product
 
 FAKE_SHA = "a" * 64
 
@@ -38,6 +38,7 @@ def _make_product(session) -> Product:
         artists="Someone",
         publisher="Someone Inc",
         year="2020",
+        identification_method=IdentificationMethod.manual,
     )
     session.add(product)
     session.flush()
@@ -272,6 +273,62 @@ def test_list_directory_entries_survives_bad_media_type_at_library_root(
 
     assert result["count"] == 1
     assert result["files"][0]["filename"] == "book.txt"
+
+
+def test_list_directory_entries_on_file_path_reports_catalog_state(tmp_path):
+    """Bug: a file `path` was looked up via entries_by_parent(file_path),
+    which never matches -- the entry lives under the file's *parent*
+    directory. Result was a phantom uncataloged entry for a cataloged file."""
+    catalog = _catalog(tmp_path)
+    _write_file(tmp_path, "shelf/box/book.txt")
+    with session_scope(catalog) as session:
+        product = _make_product(session)
+        _make_entry(session, "shelf/box", "book.txt", product=product)
+        session.commit()
+
+    result = list_directory_entries(catalog, tmp_path / "shelf" / "box" / "book.txt")
+
+    assert result["count"] == 1
+    assert result["files"][0]["cataloged"] is True
+    assert result["files"][0]["has_product"] is True
+    assert result["files"][0]["media_type"] == "text"
+
+
+def test_list_directory_entries_recursive_on_file_path_reports_catalog_state(
+    tmp_path,
+):
+    catalog = _catalog(tmp_path)
+    _write_file(tmp_path, "shelf/box/book.txt")
+    with session_scope(catalog) as session:
+        _make_entry(session, "shelf/box", "book.txt")
+        session.commit()
+
+    result = list_directory_entries(
+        catalog, tmp_path / "shelf" / "box" / "book.txt", recursive=True
+    )
+
+    assert result["count"] == 1
+    assert result["files"][0]["cataloged"] is True
+
+
+def test_summarize_directories_rejects_nonexistent_path(tmp_path):
+    """Bug: a nonexistent path returned an empty-but-successful result,
+    indistinguishable from a real directory with no scanned subdirectories,
+    instead of erroring like update_catalog/list_directory_entries do."""
+    catalog = _catalog(tmp_path)
+
+    with pytest.raises(ValueError, match="does not exist"):
+        summarize_directories(catalog, tmp_path / "nonexistent_xyz")
+
+
+def test_summarize_directories_rejects_file_path(tmp_path):
+    """Bug: a file `path` was silently treated as a fabricated, always-empty
+    directory row instead of erroring."""
+    catalog = _catalog(tmp_path)
+    _write_file(tmp_path, "shelf/box/book.txt")
+
+    with pytest.raises(ValueError, match="not a directory"):
+        summarize_directories(catalog, tmp_path / "shelf" / "box" / "book.txt")
 
 
 def test_summarize_directories_survives_bad_media_type_at_library_root(

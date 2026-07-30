@@ -3,12 +3,14 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
+import pytest
+
 from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.commands.UpdateCatalogCommand import UpdateCatalogCommand
 from rpg_librarian_mcp.db import session_scope
 from rpg_librarian_mcp.mcp.errors import list_errors as _list_errors
 from rpg_librarian_mcp.model import Entry, Error
-from rpg_librarian_mcp.model.Error import ErrorStage
+from rpg_librarian_mcp.model.ProcessingStage import ProcessingStage
 
 command_module = importlib.import_module(
     "rpg_librarian_mcp.commands.UpdateCatalogCommand"
@@ -48,7 +50,7 @@ def test_list_errors_returns_all_errors_with_path(tmp_path):
         session.add(
             Error(
                 entry_id=entry.id,
-                stage=ErrorStage.populate_file_data,
+                stage=ProcessingStage.populate_file_data,
                 error_text="boom",
             )
         )
@@ -65,17 +67,22 @@ def test_list_errors_returns_all_errors_with_path(tmp_path):
 
 def test_list_errors_filters_by_path_subtree(tmp_path):
     catalog = _catalog(tmp_path)
+    (tmp_path / "shelf" / "box-a").mkdir(parents=True)
     with session_scope(catalog) as session:
         entry_a = _make_entry(session, "shelf/box-a", "broken.txt")
         entry_b = _make_entry(session, "shelf/box-b", "broken.txt")
         session.add(
             Error(
-                entry_id=entry_a.id, stage=ErrorStage.populate_file_data, error_text="a"
+                entry_id=entry_a.id,
+                stage=ProcessingStage.populate_file_data,
+                error_text="a",
             )
         )
         session.add(
             Error(
-                entry_id=entry_b.id, stage=ErrorStage.populate_file_data, error_text="b"
+                entry_id=entry_b.id,
+                stage=ProcessingStage.populate_file_data,
+                error_text="b",
             )
         )
         session.commit()
@@ -87,21 +94,19 @@ def test_list_errors_filters_by_path_subtree(tmp_path):
 
 
 def test_list_errors_filters_by_stage(tmp_path):
-    # ErrorStage has only one member today, so this can't test *exclusion* of
-    # a non-matching stage -- only that passing the filter still matches.
     catalog = _catalog(tmp_path)
     with session_scope(catalog) as session:
         entry = _make_entry(session, "shelf/box", "broken.txt")
         session.add(
             Error(
                 entry_id=entry.id,
-                stage=ErrorStage.populate_file_data,
+                stage=ProcessingStage.populate_file_data,
                 error_text="boom",
             )
         )
         session.commit()
 
-    matching = list_errors(catalog, stage=ErrorStage.populate_file_data)
+    matching = list_errors(catalog, stage=ProcessingStage.populate_file_data)
 
     assert matching["count"] == 1
 
@@ -132,6 +137,15 @@ async def test_list_errors_surfaces_a_permission_failure_on_a_brand_new_file(
     assert result["count"] == 1
     assert result["errors"][0]["path"] == "shelf/box/book.txt"
     assert "denied" in result["errors"][0]["error_text"]
+
+
+def test_list_errors_rejects_non_existent_path(tmp_path):
+    """Bug 4: unlike the other path-taking tools, list_errors silently
+    returned an empty result for a non-existent path instead of raising."""
+    catalog = _catalog(tmp_path)
+
+    with pytest.raises(ValueError, match="does not exist"):
+        list_errors(catalog, path=tmp_path / "does_not_exist")
 
 
 def test_list_errors_empty_when_no_errors(tmp_path):

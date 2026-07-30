@@ -73,6 +73,14 @@ def move(catalog: Catalog, source: Path, destination: Path) -> dict[str, object]
         raise ValueError(f"{destination} already exists")
 
     is_dir = source_absolute.is_dir()
+    if is_dir and (
+        destination_relative == source_relative
+        or destination_relative.is_relative_to(source_relative)
+    ):
+        raise ValueError(
+            f"{destination} is inside {source} -- cannot move a folder into "
+            "its own subdirectory"
+        )
     _validate_destination_depth(destination_relative, is_dir)
 
     with session_scope(catalog) as session:
@@ -110,5 +118,8 @@ def move(catalog: Catalog, source: Path, destination: Path) -> dict[str, object]
 def register(mcp: FastMCP, catalog: Catalog) -> None:
     @mcp.tool(name="move")
     def move_tool(source: Path, destination: Path) -> dict[str, object]:
-        """Move a file or folder to a new location, updating the catalog to match."""
+        """Move a file or folder to a new location, updating the catalog to match.
+
+        `source` and `destination` must both be absolute paths.
+        """
         return move(catalog, source, destination)

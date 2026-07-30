@@ -11,7 +11,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-import rpg_librarian_mcp.model.MediaType
+from rpg_librarian_mcp.model.MediaType import TolerantMediaType
 
 # revision identifiers, used by Alembic.
 revision: str = "598a34c6ad5b"
@@ -26,7 +26,7 @@ def upgrade() -> None:
         batch_op.alter_column(
             "media_type",
             existing_type=sa.VARCHAR(length=7),
-            type_=rpg_librarian_mcp.model.MediaType.TolerantMediaType(length=32),
+            type_=TolerantMediaType(length=32),
             existing_nullable=False,
         )
 
@@ -36,9 +36,7 @@ def downgrade() -> None:
     with op.batch_alter_table("entry", schema=None) as batch_op:
         batch_op.alter_column(
             "media_type",
-            existing_type=rpg_librarian_mcp.model.MediaType.TolerantMediaType(
-                length=32
-            ),
+            existing_type=TolerantMediaType(length=32),
             type_=sa.VARCHAR(length=7),
             existing_nullable=False,
         )
