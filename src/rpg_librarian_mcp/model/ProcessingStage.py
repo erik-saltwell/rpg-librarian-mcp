@@ -10,3 +10,5 @@ class ProcessingStage(StrEnum):
     link_product = auto()
     classify_content_role = auto()
     remove = auto()
+    flag_for_review = auto()
+    resolve_review_flag = auto()

@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from fastmcp import FastMCP
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from ..catalog import Catalog
 from ..db import session_scope
+from ..model import ReviewFlag
 from ..tools.entry_queries import entries_by_parent, entries_under
 from ..tools.path_helper import walk_directories, walk_filesystem
+
+
+def _open_flagged_entry_ids(session: Session) -> set[uuid.UUID]:
+    return {
+        flag.entry_id
+        for flag in session.exec(
+            select(ReviewFlag).where(col(ReviewFlag.resolved_at).is_(None))
+        ).all()
+    }
 
 
 def list_directory_entries(
@@ -36,15 +47,20 @@ def list_directory_entries(
         else:
             entries = entries_by_parent(session, query_path)
         by_path = {entry.path: entry for entry in entries}
+        flagged_entry_ids = _open_flagged_entry_ids(session)
 
         files = []
         with_product = 0
+        flagged = 0
         for file_path in walk_filesystem(absolute_path, recursive):
             file_relative = catalog.to_relative(file_path)
             entry = by_path.get(file_relative)
             has_product = entry is not None and entry.has_product
+            is_flagged = entry is not None and entry.id in flagged_entry_ids
             if has_product:
                 with_product += 1
+            if is_flagged:
+                flagged += 1
             files.append(
                 {
                     "filename": file_relative.name,
@@ -52,6 +68,7 @@ def list_directory_entries(
                     "media_type": entry.media_type if entry is not None else None,
                     "cataloged": entry is not None,
                     "has_product": has_product,
+                    "flagged_for_review": is_flagged,
                 }
             )
 
@@ -61,21 +78,27 @@ def list_directory_entries(
         "count": len(files),
         "with_product": with_product,
         "without_product": len(files) - with_product,
+        "flagged_for_review": flagged,
     }
 
 
 def _grouped_counts_by_directory(
     session: Session, relative_path: Path
-) -> dict[Path, tuple[int, int]]:
-    """parent_path -> (with_product, without_product) counts under relative_path."""
-    counts: dict[Path, tuple[int, int]] = {}
+) -> dict[Path, tuple[int, int, int]]:
+    """parent_path -> (with_product, without_product, flagged) under relative_path."""
+    flagged_entry_ids = _open_flagged_entry_ids(session)
+    counts: dict[Path, tuple[int, int, int]] = {}
     for entry in entries_under(session, relative_path):
-        with_product, without_product = counts.get(entry.parent_path, (0, 0))
+        with_product, without_product, flagged = counts.get(
+            entry.parent_path, (0, 0, 0)
+        )
         if entry.has_product:
             with_product += 1
         else:
             without_product += 1
-        counts[entry.parent_path] = (with_product, without_product)
+        if entry.id in flagged_entry_ids:
+            flagged += 1
+        counts[entry.parent_path] = (with_product, without_product, flagged)
     return counts
 
 
@@ -85,6 +108,7 @@ class _DirectoryRow:
     scanned: bool
     with_product: int
     without_product: int
+    flagged: int
 
 
 def summarize_directories(
@@ -130,20 +154,25 @@ def summarize_directories(
 
     rows = []
     for dir_path in candidate_dirs:
-        with_product, without_product = scanned_counts.get(dir_path, (0, 0))
+        with_product, without_product, flagged = scanned_counts.get(dir_path, (0, 0, 0))
         rows.append(
             _DirectoryRow(
                 path=dir_path,
                 scanned=dir_path in scanned_counts,
                 with_product=with_product,
                 without_product=without_product,
+                flagged=flagged,
             )
         )
 
     if not include_complete:
-        rows = [row for row in rows if not (row.scanned and row.without_product == 0)]
+        rows = [
+            row
+            for row in rows
+            if not (row.scanned and row.without_product == 0 and row.flagged == 0)
+        ]
 
-    rows.sort(key=lambda row: (-row.without_product, str(row.path)))
+    rows.sort(key=lambda row: (-row.without_product, -row.flagged, str(row.path)))
 
     total_directories = len(rows)
     truncated = total_directories > effective_limit
@@ -157,6 +186,7 @@ def summarize_directories(
                 "scanned": row.scanned,
                 "with_product": row.with_product,
                 "without_product": row.without_product,
+                "flagged": row.flagged,
             }
             for row in rows
         ],
@@ -170,7 +200,9 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
     def list_directory_entries_tool(
         path: Path, recursive: bool = False
     ) -> dict[str, object]:
-        """Files in `path`, each showing whether a product has been identified.
+        """Files in `path`, each showing whether a product has been
+        identified and whether it has an open review flag (see
+        `flag_for_review`/`list_review_items`).
 
         `path` must be an absolute path. If `path` is itself a file, returns
         a single-entry listing for that file.
@@ -181,7 +213,9 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
     def summarize_directories_tool(
         path: Path, include_complete: bool = False, limit: int = 100
     ) -> dict[str, object]:
-        """Per-directory product-identification counts, recursively under `path`.
+        """Per-directory product-identification and open-review-flag counts,
+        recursively under `path`. A directory with open flags is never
+        treated as complete, even if every entry has a product.
 
         `path` must be an absolute path to a directory.
         """

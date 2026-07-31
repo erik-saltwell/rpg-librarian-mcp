@@ -62,6 +62,16 @@ handouts).
    role above (skipped automatically for system-agnostic content).
 6. `move` to file the product into the organization scheme above.
 
+Can't identify a product, torn between candidates, or otherwise want a
+human to look at something rather than guess? Call `flag_for_review` on it
+(a whole product's files at once, if you point it at the product's
+directory) with a `reason` explaining what's uncertain, and move on rather
+than blocking on it. `list_review_items` shows what's still open;
+`list_directory_entries`/`summarize_directories` surface an ambient count
+so flagged items don't get forgotten. Once the user says how to handle a
+flagged item, act on that instruction (e.g. `update_product`) if there is
+one, then call `resolve_review_flag` with a note on what was decided.
+
 Bringing in content that likely overlaps with what's already here (a
 friend's drive, an old backup, etc.)? Run `ingest_external_source` first —
 it copies only the genuinely new files (by content hash) into
@@ -74,6 +84,8 @@ moves the file into `.catalog/trash/` rather than deleting it, so it's
 still recoverable by hand if needed.
 
 Other useful tools: `list_errors` (see what failed to process and why),
-`run_readonly_query` / `get_catalog_schema` (ad-hoc catalog queries),
-`update_metadata` (refresh metadata read from a file's own embedded
-properties).
+`get_entry_details` (one file's full picture -- its product, errors,
+review flags, and every type-specific metadata table that has a row for
+it, in one call), `run_readonly_query` / `get_catalog_schema` (ad-hoc
+catalog queries), `update_metadata` (refresh metadata read from a file's
+own embedded properties).

@@ -15,8 +15,10 @@ from . import (
     classify_content_role,
     directory_status,
     dtrpg,
+    entry_details,
     errors,
     find_duplicates,
+    flag_for_review,
     ingest_external_source,
     isbn,
     metadata,
@@ -24,6 +26,8 @@ from . import (
     read_pdfs,
     readonly_query,
     remove,
+    resolve_review_flag,
+    review_items,
     rpg_geek,
     status,
     update_catalog,
@@ -49,6 +53,10 @@ REGISTRARS: Sequence[Registrar] = (
     update_product.register,
     ingest_external_source.register,
     classify_content_role.register,
+    flag_for_review.register,
+    resolve_review_flag.register,
+    review_items.register,
+    entry_details.register,
 )
 
 __all__ = [

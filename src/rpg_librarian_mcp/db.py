@@ -45,6 +45,12 @@ def _create_default_claude_md(library_root: Path) -> None:
     claude_md_path.write_text(resource.read_text(encoding="utf-8"), encoding="utf-8")
 
 
+# Skills the user is expected to edit in place (e.g. a site list to keep
+# current) -- like CLAUDE.md, these are seeded once and never overwritten by
+# a later migrate, so package upgrades can't silently wipe user edits.
+_USER_MAINTAINED_SKILLS = {"rpg-librarian-mcp-authenticate"}
+
+
 def _deploy_skills(library_root: Path, *, overwrite: bool) -> None:
     """Copy every packaged skill directory into the library's .claude/skills/.
 
@@ -57,6 +63,9 @@ def _deploy_skills(library_root: Path, *, overwrite: bool) -> None:
     directory is wiped and replaced wholesale, so stale/renamed files from an
     older packaged version don't linger; directories that don't correspond to
     a currently-packaged skill (a user's own custom skill) are never touched.
+    Skills in _USER_MAINTAINED_SKILLS are always left alone once present,
+    regardless of overwrite, since their content is meant to be edited by the
+    user rather than kept in sync with the package.
     """
     skills_dir = resources.files("rpg_librarian_mcp") / "resources" / "skills"
     with resources.as_file(skills_dir) as packaged_skills_path:
@@ -68,7 +77,7 @@ def _deploy_skills(library_root: Path, *, overwrite: bool) -> None:
                 continue
             target_skill = target_root / packaged_skill.name
             if target_skill.exists():
-                if not overwrite:
+                if not overwrite or packaged_skill.name in _USER_MAINTAINED_SKILLS:
                     continue
                 shutil.rmtree(target_skill)
             target_skill.parent.mkdir(parents=True, exist_ok=True)

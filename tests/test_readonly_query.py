@@ -162,6 +162,7 @@ def test_get_catalog_schema_returns_domain_tables_only(tmp_path):
         "audiometadata",
         "imagemetadata",
         "videometadata",
+        "reviewflag",
     }
     for table in result["tables"]:
         assert "CREATE TABLE" in table["sql"]

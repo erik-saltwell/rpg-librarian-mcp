@@ -14,6 +14,7 @@ from .PdfContents import PdfContents
 from .PdfMetadata import PdfMetadata
 from .ProcessingStage import ProcessingStage
 from .Product import Product
+from .ReviewFlag import ReviewFlag
 from .VideoMetadata import VideoMetadata
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "PdfMetadata",
     "ProcessingStage",
     "Product",
+    "ReviewFlag",
     "VideoMetadata",
 ]

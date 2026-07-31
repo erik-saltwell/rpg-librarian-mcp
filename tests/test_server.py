@@ -30,6 +30,10 @@ async def test_all_tools_are_registered():
         "classify_content_role",
         "find_duplicates",
         "remove",
+        "flag_for_review",
+        "resolve_review_flag",
+        "list_review_items",
+        "get_entry_details",
     }
 
 

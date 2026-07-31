@@ -94,6 +94,19 @@ def test_migrate_existing_resyncs_a_stale_skill_file(tmp_path):
     assert not (skill_dir / "stale_extra_file.md").exists()
 
 
+def test_migrate_existing_does_not_overwrite_the_authenticate_skill(tmp_path):
+    """The authenticate skill's site list is meant to be user-edited, like
+    CLAUDE.md -- unlike other bundled skills, migrate must never resync it."""
+    catalog = _catalog(tmp_path)
+    skill_dir = tmp_path / ".claude" / "skills" / "rpg-librarian-mcp-authenticate"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("my edited site list, do not touch")
+
+    migrate_existing(catalog)
+
+    assert (skill_dir / "SKILL.md").read_text() == "my edited site list, do not touch"
+
+
 def test_migrate_existing_does_not_touch_a_users_own_custom_skill(tmp_path):
     catalog = _catalog(tmp_path)
     custom_skill_dir = tmp_path / ".claude" / "skills" / "my-own-skill"
