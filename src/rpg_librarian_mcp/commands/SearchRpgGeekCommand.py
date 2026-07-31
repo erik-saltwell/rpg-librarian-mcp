@@ -11,6 +11,9 @@ class SearchRpgGeekCommand:
     async def run(
         self, name: str | None, isbn: str | None, max_values: int = 5
     ) -> list[ProductCandidate]:
+        if max_values < 1:
+            raise ValueError(f"max_values must be a positive integer, got {max_values}")
+
         candidates = await self.client.find_candidates(name, isbn, max_values)
         return [
             ProductCandidate(

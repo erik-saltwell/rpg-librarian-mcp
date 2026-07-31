@@ -9,7 +9,10 @@ filtered_prefixes: tuple[str, ...] = (".",)
 
 def is_filtered(path: Path) -> bool:
     name_with_extension: str = path.name
-    if name_with_extension in filtered_names:
+    # Case-insensitive: AGENTS.md/CLAUDE.md are conventionally uppercase,
+    # but this must also still catch a pre-existing lowercase file from
+    # before that convention was applied here.
+    if name_with_extension.lower() in filtered_names:
         return True
     return bool(
         any(name_with_extension.startswith(prefix) for prefix in filtered_prefixes)

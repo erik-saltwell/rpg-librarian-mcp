@@ -38,7 +38,7 @@ def test_migrate_existing_bootstraps_when_catalog_missing(tmp_path):
     migrate_existing(catalog)
 
     assert catalog.db_path.exists()
-    assert (tmp_path / "claude.md").exists()
+    assert (tmp_path / "CLAUDE.md").exists()
     assert (
         tmp_path / ".claude" / "skills" / "rpg-librarian-mcp-test" / "SKILL.md"
     ).exists()
@@ -46,15 +46,30 @@ def test_migrate_existing_bootstraps_when_catalog_missing(tmp_path):
 
 def test_migrate_existing_overwrites_claude_md(tmp_path):
     catalog = _catalog(tmp_path)
-    claude_md_path = tmp_path / "claude.md"
+    claude_md_path = tmp_path / "CLAUDE.md"
     claude_md_path.write_text("stale content")
 
     migrate_existing(catalog)
 
-    packaged = resources.files("rpg_librarian_mcp") / "resources" / "claude.md"
+    packaged = resources.files("rpg_librarian_mcp") / "resources" / "CLAUDE.md"
     assert claude_md_path.read_text(encoding="utf-8") == packaged.read_text(
         encoding="utf-8"
     )
+
+
+def test_migrate_existing_removes_a_stale_lowercase_claude_md(tmp_path):
+    """Bug: a library bootstrapped before CLAUDE.md's uppercase rename kept
+    its old lowercase claude.md forever -- migrate_existing wrote a fresh
+    CLAUDE.md alongside it instead of cleaning up the now-dead duplicate,
+    contradicting its own "fully up to date" docstring."""
+    catalog = _catalog(tmp_path)
+    legacy_path = tmp_path / "claude.md"
+    legacy_path.write_text("old personal library notes")
+
+    migrate_existing(catalog)
+
+    assert not legacy_path.exists()
+    assert (tmp_path / "CLAUDE.md").exists()
 
 
 def test_migrate_existing_resyncs_a_stale_skill_file(tmp_path):

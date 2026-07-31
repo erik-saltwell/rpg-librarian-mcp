@@ -13,7 +13,7 @@ src/rpg_librarian_mcp/
     alembic.ini      bundled into the package so migrations work post-install
     migrations/
   resources/
-    claude.md          default claude.md seeded into a new library root
+    CLAUDE.md          default CLAUDE.md seeded into a new library root
     llm_settings.yaml   checked-in litellm model choice, read via importlib.resources
     prompts/            bundled Jinja prompt templates (e.g. read_pdfs's LLM prompt)
   model/             SQLModel tables (Entry, Error, MediaType, PdfContents, ...)
@@ -66,9 +66,9 @@ auto-create path does. It's a safe no-op if the catalog is already at head,
 and exits with a clear error (instead of starting the server) if there's no
 catalog at this location yet.
 
-The same first-time bootstrap also seeds a starter `claude.md` in the
-library root, from a packaged default (`resources/claude.md`), if one isn't
-already there. An existing `claude.md` is never overwritten, and this only
+The same first-time bootstrap also seeds a starter `CLAUDE.md` in the
+library root, from a packaged default (`resources/CLAUDE.md`), if one isn't
+already there. An existing `CLAUDE.md` is never overwritten, and this only
 happens at the moment `.catalog` is first created — not on every run.
 
 ### `read_pdfs`: Tesseract OCR

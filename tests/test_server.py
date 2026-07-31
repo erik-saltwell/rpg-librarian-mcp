@@ -26,6 +26,10 @@ async def test_all_tools_are_registered():
         "search_dtrpg",
         "lookup_isbn",
         "update_product",
+        "ingest_external_source",
+        "classify_content_role",
+        "find_duplicates",
+        "remove",
     }
 
 

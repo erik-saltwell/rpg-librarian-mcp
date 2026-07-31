@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from rpg_librarian_mcp.commands.LookupIsbnCommand import LookupIsbnCommand
-from rpg_librarian_mcp.isbn.lookup import IsbnLookupResult
+from rpg_librarian_mcp.isbn.lookup import GoogleBooksUnavailableError, IsbnLookupResult
 
 VALID_ISBN_13 = "978-0-306-40615-7"
 VALID_ISBN_13_NORMALIZED = "9780306406157"
@@ -70,3 +72,20 @@ def test_run_handles_missing_year():
 
     assert result is not None
     assert result.year_published is None
+
+
+def test_run_raises_a_clear_error_when_google_books_is_unavailable():
+    """Bug: a Google Books auth/quota failure propagated as the bare
+    provider message ("Google Books returned 403: Forbidden") with no
+    indication that Open Library/Wikidata fallback was deliberately not
+    attempted -- the tool's own docstring promises a fallback chain, so a
+    caller seeing a raw passthrough error has no way to tell this apart
+    from an unhandled crash."""
+
+    def fake_lookup(isbn: str) -> IsbnLookupResult | None:
+        raise GoogleBooksUnavailableError("Google Books returned 403: Forbidden")
+
+    with pytest.raises(GoogleBooksUnavailableError, match="fallback") as exc_info:
+        LookupIsbnCommand(lookup_isbn=fake_lookup).run(VALID_ISBN_13)
+
+    assert "403: Forbidden" in str(exc_info.value)

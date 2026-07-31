@@ -19,7 +19,16 @@ class LookupIsbnCommand:
             return None
         normalized = _normalize(isbn)
 
-        result = self.lookup_isbn(normalized)
+        try:
+            result = self.lookup_isbn(normalized)
+        except isbn_lookup.GoogleBooksUnavailableError as error:
+            raise isbn_lookup.GoogleBooksUnavailableError(
+                f"{error} -- Open Library/Wikidata fallback was not "
+                "attempted: Google Books being unusable (quota/key/rate "
+                "limit) is treated as a stop condition, not a per-ISBN "
+                "miss, since the other two providers' hit rate alone is "
+                "too low to rely on"
+            ) from error
         if result is None:
             return None
 

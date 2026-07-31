@@ -8,3 +8,5 @@ class ProcessingStage(StrEnum):
     extract_metadata = auto()
     read_pdfs = auto()
     link_product = auto()
+    classify_content_role = auto()
+    remove = auto()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .AudioMetadata import AudioMetadata
+from .ContentRole import ContentRole
 from .Entry import Entry
 from .Error import Error
 from .FileMetadata import FileMetadata
@@ -17,6 +18,7 @@ from .VideoMetadata import VideoMetadata
 
 __all__ = [
     "AudioMetadata",
+    "ContentRole",
     "Entry",
     "Error",
     "FileMetadata",

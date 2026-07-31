@@ -19,6 +19,10 @@ still needs to be done, and pick a next step.
 | `search_dtrpg` | complete |
 | `lookup_isbn` | complete |
 | `update_product` | complete |
+| `ingest_external_source` | complete |
+| `classify_content_role` | complete |
+| `find_duplicates` | complete |
+| `remove` | complete |
 
 ## Tool 0 — `update_catalog(path, process_recursively=False, force=False)`
 
@@ -119,9 +123,9 @@ Response shape:
 {
   "path": "books/Systems/Call of Cthulhu",
   "files": [
-    {"filename": "Keeper Rulebook.pdf", "media_type": "pdf", "cataloged": true, "has_product": true},
-    {"filename": "scan_042.pdf", "media_type": "pdf", "cataloged": true, "has_product": false},
-    {"filename": "never_scanned.pdf", "media_type": null, "cataloged": false, "has_product": false}
+    {"filename": "Keeper Rulebook.pdf", "path": "books/Systems/Call of Cthulhu/Keeper Rulebook.pdf", "media_type": "pdf", "cataloged": true, "has_product": true},
+    {"filename": "scan_042.pdf", "path": "books/Systems/Call of Cthulhu/scan_042.pdf", "media_type": "pdf", "cataloged": true, "has_product": false},
+    {"filename": "never_scanned.pdf", "path": "books/Systems/Call of Cthulhu/never_scanned.pdf", "media_type": null, "cataloged": false, "has_product": false}
   ],
   "count": 2,
   "with_product": 1,
@@ -129,6 +133,13 @@ Response shape:
 }
 ```
 
+- `path` (library-relative, added post-launch — bug found via the
+  `rpg-librarian-mcp-test` skill): a recursive listing spans multiple
+  subdirectories, so two same-named files in different folders (e.g. two
+  scans both called `book.txt`) were otherwise indistinguishable in the
+  response — only `filename` (the bare name) was returned. `filename` is
+  kept alongside it rather than removed, since non-recursive callers that
+  just want the bare name still have it without re-deriving it from `path`.
 - `has_product` (bool) rather than exposing `product_id` itself — the LLM
   needs "is this done," not the UUID; matches the earlier decision to never
   surface raw DB identity to the caller.
@@ -685,3 +696,273 @@ there's no "stale result" concept to bypass. Response shape adds
   "product_id": "…", "created": true
 }
 ```
+
+## Tool 12 — `ingest_external_source(source_path, name)`
+
+**Status: complete.** Design reached via brainstorm on 2026-07-30,
+implemented the same day. Full design/rationale in `.planning/ingestion.md`.
+Implemented in `mcp/ingest_external_source.py` — a plain
+`register()`/business-logic-function pair (same architecture as `move`, not
+`UpdateBaseCommand`), since this is one filesystem walk plus a report write,
+nothing entry-scoped to iterate.
+
+One addition beyond the original design: `source_path` is rejected outright
+if it resolves *inside* the library root (`catalog.to_relative` succeeding
+is the signal) — content already in the library isn't this tool's job,
+`update_catalog` handles it directly, and allowing an in-root source risked
+`_inbox/<name>/` nesting inside its own source tree on a careless call.
+
+Copies only the new content from a path outside the library into
+`_inbox/<name>/`, deduping by exact `sha256` against both the library and
+any content already staged there from a prior run of the same source. The
+one new capability the "friend hands you a pile of overlapping content"
+scenario needs — everything after this (`update_catalog`, `read_pdfs`,
+`update_product`, `classify_content_role`, `move`) is the existing
+pipeline, unchanged, pointed at `_inbox/<name>/`.
+
+```python
+def ingest_external_source(source_path: Path, name: str) -> dict[str, object]:
+    """Copy new (non-duplicate) content from an external path into
+    `_inbox/<name>/`, deduping by content hash against both the library
+    and any previously staged content under the same name."""
+```
+
+`source_path` is the one deliberate exception to "every tool path is
+library-relative" — an absolute path outside the library root, since this
+content isn't catalogable until after this call. Full per-file manifest
+goes to a written report (`_inbox/<name>/_ingest_report.md`), not the tool
+response — see `ingestion.md` for the report shape and why.
+
+Response shape:
+```json
+{
+  "source_path": "/media/friend-drive/rpg-stuff",
+  "name": "dave",
+  "scanned": 4213,
+  "copied": 340,
+  "skipped_duplicate": 3873,
+  "report_path": "_inbox/dave/_ingest_report.md"
+}
+```
+
+**Known, deliberately unhandled edge cases** (flagging, not resolving —
+low-frequency enough that hand-fixing them beats adding scope):
+- A second run against the same `name` **overwrites**
+  `_ingest_report.md`, not appends — run 1's manifest is lost if a run 2
+  happens before the first drop was triaged out of `_inbox/<name>/`.
+- The report file itself lives inside `_inbox/<name>/`, so once
+  `update_catalog` runs on the staging dir it becomes a cataloged `Entry`
+  like anything else there (harmless, but worth knowing before wondering
+  why a `.md` file shows up in `list_directory_entries`).
+
+## Prerequisite: `Product.content_role`
+
+**Status: complete.** New nullable, indexed enum column on `Product`
+(`ContentRole`: `core_rules`, `adventures_and_scenarios`,
+`settings_and_supplements`, `gm_and_player_aids`, `extras`), migration
+`06f71334c29a` (`592aeb22d8d0` -> `06f71334c29a`). Null for agnostic
+products — no role tier in the target scheme for them. New
+`ProcessingStage.classify_content_role` value added alongside it. See
+`ingestion.md` for the full field/enum definition.
+
+## Tool 13 — `classify_content_role(path, process_recursively=False, force=False)`
+
+**Status: complete.** Design reached via brainstorm on 2026-07-30,
+implemented the same day. Full design/rationale in `.planning/ingestion.md`.
+Implemented in `mcp/classify_content_role.py` /
+`commands/ClassifyContentRoleCommand.py`, LLM judgment in
+`llm/content_role_judgment.py` (`resources/prompts/content_role_prompt.jinja`),
+same `litellm`-structured-output shape as `read_pdfs`'s `judge_pdf_contents`.
+
+`UpdateBaseCommand`-shaped, same family as `read_pdfs`/`update_product`.
+For each entry under `path`, classifies its product's `content_role` via an
+LLM judgment over `Product.description` and any linked PDFs'
+`PdfContents.sample_text`/`description` — no independent text extraction,
+reuses `read_pdfs`'s output.
+
+```python
+async def classify_content_role(
+    path: Path,
+    ctx: Context,
+    process_recursively: bool = False,
+    force: bool = False,
+) -> dict[str, object]:
+    """Classify each entry's product into a content role (Core Rules /
+    Adventures / Settings & Supplements / GM & Player Aids / Extras) using
+    an LLM judgment over the product's description and any linked PDFs'
+    sample text. Skips agnostic products and products with no usable text."""
+```
+
+- `in_scope`: false for agnostic products (role doesn't apply). Resolved as
+  a set of agnostic `Product.id`s once per `process()` call, not queried
+  per entry inside `in_scope` — `in_scope` takes no `session` and, per
+  `UpdateBaseCommand`'s own contract, must apply even when `force=True`
+  (system-agnostic content has no role tier to classify, full stop, not a
+  staleness condition `force` should be able to bypass). One addition
+  beyond the original design: `process()` is overridden (same pattern as
+  `ReadPdfsCommand`'s Tesseract check) to resolve that set before
+  delegating to the base loop.
+- `should_process`: true only if the product has no `content_role` yet or
+  has a recorded error for this stage — classifies once per product, not
+  once per entry, even though a product can span several entries. Also
+  independently re-checks the agnostic condition (belt-and-suspenders with
+  `in_scope`'s precomputed set, since `should_process` is called with a
+  live `session` anyway).
+- No usable text (`Product.description` and no linked
+  `PdfContents.sample_text`) → skipped, not errored; re-run after
+  `lookup_isbn`/`lookup_rpg_geek_product`/`read_pdfs` populates one.
+- `_gather_context` concatenates a product's description plus every linked
+  PDF entry's full `sample_text`/`description`, unbounded — flagging, not
+  resolving: a product spanning many large PDFs (e.g. dozens of
+  pre-generated character sheets) could exceed the model's context window
+  and error on every entry under it, with no truncation/summarization
+  fallback in this version.
+
+Response shape: standard `UpdateResult._asdict()` plus `errors`, same as
+`read_pdfs`.
+
+## Tool 14 — `find_duplicates(path=None)`
+
+**Status: complete.** Implemented in `mcp/find_duplicates.py`, no `Command`
+class — same lightweight `register()` pattern as `list_errors`/
+`list_directory_entries` (a fast, synchronous, read-only query with no
+`force`/progress concept).
+
+Entries whose `sha256` matches at least one other entry, grouped by hash.
+
+```python
+def find_duplicates(path: Path | None = None) -> dict[str, object]:
+    """Entries whose sha256 content hash matches at least one other entry,
+    grouped by hash."""
+```
+
+- `path`, if given, must be an absolute path **to a directory** and scopes
+  the scan (recursive) to that subtree; a file path is rejected
+  (`"... is a file, not a directory -- a duplicate-scan scope must be a
+  directory"`) rather than silently returning an empty/wrong result —
+  `entries_under`'s `is_relative_to` filtering has no meaningful
+  interpretation for a single-file scope, unlike `list_errors`, which
+  special-cases an exact-path match instead. A non-existent path raises,
+  matching `list_errors`'s convention.
+- With no `path`, every cataloged `Entry` is loaded (`select(Entry)`, not a
+  scalar-column `select` — the established workaround for `ty`'s inability
+  to resolve `sqlmodel`'s multi-column `select()` overloads, same as
+  `ingest_external_source`'s `_library_hashes`) and grouped by `sha256` in
+  Python. A full-table scan, not a SQL `GROUP BY ... HAVING count > 1` —
+  consistent with every other aggregation in this spec
+  (`summarize_directories`'s grouped counts, `move`'s catalog rewrite):
+  Python-side grouping over an already-fetched result set, not pushed to
+  SQL.
+- Each group carries every entry's library-relative `path` and
+  `has_product`, so an already-identified copy can be told apart from an
+  unidentified one when deciding which to keep — same `has_product`-not-
+  `product_id` convention as `list_directory_entries` (never surface raw
+  DB identity).
+- Groups are sorted by `count` descending, then `sha256` — most-duplicated
+  content first, mirroring `summarize_directories`'s "biggest remaining
+  work first" sort.
+- **Exact-hash dedup only**, same scope boundary as `ingest_external_source`
+  — near-duplicates (different scans/editions/printings of the same
+  product) are not caught here; that's a `update_product`-time judgment
+  call, not a hash comparison.
+
+Response shape:
+```json
+{
+  "duplicate_groups": [
+    {
+      "sha256": "3f9a...",
+      "count": 2,
+      "entries": [
+        {"path": "DriveThruRPG/Chaosium/Petersen's Abominations/Abominations.pdf", "has_product": true},
+        {"path": "_inbox/dave/Chaosium/Petersen's Abominations/Abominations.pdf", "has_product": false}
+      ]
+    }
+  ],
+  "duplicate_group_count": 1,
+  "duplicate_file_count": 2
+}
+```
+
+## Tool 15 — `remove(path, process_recursively=False, force=False)`
+
+**Status: complete.** Implemented in `mcp/remove.py`, backed by
+`commands/RemoveCommand.py` (`UpdateBaseCommand` subclass — reuses its
+entry-resolution/per-entry error handling/progress reporting, same family
+as `read_pdfs`/`update_product`/`classify_content_role`).
+
+Moves every cataloged entry under `path` (or `path` itself, for a single
+file) into `.catalog/trash/`, mirroring its library-relative path there
+(intermediate directories created as needed), and removes its `Entry` row.
+Not a delete — the file is relocated on disk, not destroyed.
+
+```python
+async def remove(
+    path: Path,
+    ctx: Context,
+    process_recursively: bool = False,
+    force: bool = False,
+) -> dict[str, object]:
+    """Move every cataloged entry under `path` into `.catalog/trash/`,
+    removing it from the catalog."""
+```
+
+- **`should_process` is unconditionally `True`.** Removal has no staleness
+  concept the way enrichment commands (`read_pdfs`, `classify_content_role`)
+  do — an already-removed entry has no `Entry` row left to be resolved
+  again on a later run, so there's nothing to skip. `force` is present only
+  for interface consistency with sibling `UpdateBaseCommand` tools; it has
+  no observable effect here.
+- **Ordering, same "unreliable step last" principle as `move`:**
+  `process_one` calls `session.delete(entry)` (queued, not yet committed)
+  *before* the disk rename. If the rename raises,
+  `UpdateBaseCommand`'s per-entry rollback discards the queued delete
+  automatically — the file and its `Entry` row are left untouched rather
+  than ending up removed-from-catalog but still on disk at the old path.
+- **Never overwrites the trash** — if the mirrored destination under
+  `.catalog/trash/` already exists (e.g. removing, restoring by hand, then
+  removing the same path again), that entry errors (recorded as a
+  per-entry `Error`, same as any other `UpdateBaseCommand` failure) rather
+  than silently overwriting the earlier trashed copy. Same "never overwrite,
+  no merge" rule `move` already applies to its own destination collisions.
+- **No new stage-specific validation for missing files/stale rows** —
+  `Path.rename` raising `FileNotFoundError` for an already-drifted Entry
+  (file deleted outside the tool) propagates as a normal per-entry error,
+  same as any other filesystem failure in this family of commands.
+- `.catalog/` itself is already excluded from every filesystem walk
+  (`tools/path_helper.py`'s dot-prefix filter), so trashed content never
+  gets re-discovered and re-cataloged by a later `update_catalog` run.
+- **Path-traversal guard in `process_one`.** `entry.path`'s components are
+  normally validated (never absolute, no `..`) by `ParentPathType` on every
+  bind — but a row planted by raw SQL (`conftest.insert_raw_entry`, the
+  `poisoned_catalog` fixture; commit f4d6fc6 fixed real bugs from exactly
+  this class of row) bypasses that. `process_one` resolves the computed
+  trash path and rejects the entry (a per-entry error, not a crash) unless
+  it's actually inside `.catalog/trash/` — found via review, not a report,
+  since nothing upstream guarantees every `Entry` row is well-formed.
+- **Empty-directory pruning, added post-implementation.** `process()` is
+  overridden (same shape as `ReadPdfsCommand`'s Tesseract check /
+  `ClassifyContentRoleCommand`'s agnostic-set precompute) to prune
+  directories left empty by the run after the base loop completes —
+  without it, "removes all files under the passed in path" left the empty
+  directory shells behind, which `summarize_directories` would then surface
+  as permanent phantom `scanned: false` rows. Two constraints on the
+  pruning, both load-bearing:
+  - **Scoped to directories this run actually removed a file from**
+    (tracked per-entry in `process_one` via `_directories_touched`), not a
+    fresh filesystem scan for anything empty — an incidentally-empty
+    sibling folder the run never touched is not this call's business.
+  - **Never prunes above the requested `starting_path`.** Cascades upward
+    while a parent also ends up empty, but stops at `starting_path` itself
+    rather than continuing into its ancestors — "remove everything under
+    this path" scopes the cleanup to that path, not license to also sweep
+    out directories above it. A single-file `starting_path` has no
+    directory scope to prune at all.
+  - Processing order is deepest-candidate-first (`max(..., key=len(parts))`
+    each iteration, not a plain stack) — a directory and its own
+    subdirectory can both be touched in the same run, and a failed `rmdir`
+    (non-empty) is never retried, so the parent must never be attempted
+    before its child is resolved.
+
+Response shape: standard `UpdateResult._asdict()` plus `errors`, same as
+`read_pdfs`/`classify_content_role`.

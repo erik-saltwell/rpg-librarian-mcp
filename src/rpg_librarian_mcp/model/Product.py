@@ -6,6 +6,7 @@ from sqlmodel import Field
 
 from ..model.core import EntityBase
 from ..utils.pydantic_aliases import NonEmptyStr
+from .ContentRole import ContentRole
 from .IdentificationMethod import IdentificationMethod
 
 
@@ -21,3 +22,4 @@ class Product(EntityBase, table=True):
 
     system: NonEmptyStr = Field(default=UNKNOWN_SYSTEM, nullable=False, index=True)
     identification_method: IdentificationMethod = Field(nullable=False, index=True)
+    content_role: ContentRole | None = Field(default=None, nullable=True, index=True)

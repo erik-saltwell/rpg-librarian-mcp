@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+import pytest
+
 from rpg_librarian_mcp.commands.SearchDtrpgCommand import SearchDtrpgCommand
 from rpg_librarian_mcp.dtrpg.client import ProductDetails
 
@@ -61,3 +63,25 @@ def test_search_dtrpg_empty_description_becomes_none():
     result = SearchDtrpgCommand(client).run("Shadowrun")
 
     assert result[0].description is None
+
+
+def test_search_dtrpg_rejects_a_negative_max_values_without_calling_client():
+    """Bug: max_values=-5 was passed straight through as DriveThruRPG's
+    `pageSize=-5` query param, leaking a raw 400 upstream error instead of
+    a clean local validation error."""
+    client = MagicMock()
+
+    with pytest.raises(ValueError, match="max_values"):
+        SearchDtrpgCommand(client).run("Shadowrun", max_values=-5)
+
+    client.search_products.assert_not_called()
+    client.search_library.assert_not_called()
+
+
+def test_search_dtrpg_rejects_a_zero_max_values_without_calling_client():
+    client = MagicMock()
+
+    with pytest.raises(ValueError, match="max_values"):
+        SearchDtrpgCommand(client).run("Shadowrun", max_values=0)
+
+    client.search_products.assert_not_called()

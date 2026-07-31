@@ -18,5 +18,12 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
         Returns None if `isbn` is invalid or no provider has data for it --
         not an error. Does not support ISSN (periodical) lookups; an ISSN
         input reliably returns None.
+
+        Exception, not a fallback case: if Google Books itself is unusable
+        right now (quota exhausted, key invalid/blocked, rate limited) this
+        raises instead of silently falling back to Open Library/Wikidata --
+        their hit rate alone is too low to rely on, so the caller is meant
+        to see and address the Google Books problem rather than get a
+        degraded-quality result with no indication why.
         """
         return LookupIsbnCommand().run(isbn)

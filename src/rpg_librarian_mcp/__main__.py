@@ -13,8 +13,8 @@ def main() -> None:
         "--migrate",
         action="store_true",
         help="Bring the current directory fully up to date -- create the "
-        "catalog/claude.md/db if missing, upgrade the db schema to the "
-        "latest version, and sync claude.md and bundled skills to the "
+        "catalog/CLAUDE.md/db if missing, upgrade the db schema to the "
+        "latest version, and sync CLAUDE.md and bundled skills to the "
         "currently installed version -- then exit instead of starting the "
         "server.",
     )

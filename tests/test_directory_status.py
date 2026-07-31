@@ -127,6 +127,22 @@ def test_list_directory_entries_recursive_walks_subdirectories(tmp_path):
     assert result["count"] == 2
 
 
+def test_list_directory_entries_recursive_distinguishes_same_named_files_by_path(
+    tmp_path,
+):
+    """Bug: recursive listings only returned each file's bare `filename`, so
+    same-named files in different subdirectories (e.g. two scans both named
+    `book.txt`) were indistinguishable in the response."""
+    catalog = _catalog(tmp_path)
+    _write_file(tmp_path, "shelf/box-a/book.txt")
+    _write_file(tmp_path, "shelf/box-b/book.txt")
+
+    result = list_directory_entries(catalog, tmp_path / "shelf", recursive=True)
+
+    paths = {f["path"] for f in result["files"]}
+    assert paths == {"shelf/box-a/book.txt", "shelf/box-b/book.txt"}
+
+
 def test_summarize_directories_sorts_by_without_product_descending(tmp_path):
     catalog = _catalog(tmp_path)
     with session_scope(catalog) as session:

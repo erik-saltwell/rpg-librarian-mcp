@@ -24,7 +24,7 @@ def test_migrate_flag_bootstraps_a_fresh_directory(tmp_path, monkeypatch):
     main()  # should not raise
 
     assert (tmp_path / ".catalog" / "catalog.db").exists()
-    assert (tmp_path / "claude.md").exists()
+    assert (tmp_path / "CLAUDE.md").exists()
     assert (
         tmp_path / ".claude" / "skills" / "rpg-librarian-mcp-test" / "SKILL.md"
     ).exists()

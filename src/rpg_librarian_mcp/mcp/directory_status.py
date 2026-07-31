@@ -48,6 +48,7 @@ def list_directory_entries(
             files.append(
                 {
                     "filename": file_relative.name,
+                    "path": str(file_relative),
                     "media_type": entry.media_type if entry is not None else None,
                     "cataloged": entry is not None,
                     "has_product": has_product,

@@ -1,5 +1,7 @@
 from unittest.mock import AsyncMock
 
+import pytest
+
 from rpg_librarian_mcp.commands.LookupRpgGeekProductCommand import (
     LookupRpgGeekProductCommand,
 )
@@ -72,3 +74,45 @@ async def test_lookup_rpg_geek_product_handles_missing_publisher_and_system():
     assert result.publisher is None
     assert result.system is None
     assert result.creators == []
+
+
+async def test_lookup_rpg_geek_product_rejects_a_negative_id_without_calling_client():
+    """Bug: a negative id was passed straight through to RPGGeek, which
+    returned an empty stub item (source_id="0") that got parsed into a
+    fabricated "success" record instead of erroring like a not-found
+    positive id does."""
+    client = AsyncMock()
+
+    with pytest.raises(ValueError, match="rpggeek_id"):
+        await LookupRpgGeekProductCommand(client).run(-1)
+
+    client.get_product_details.assert_not_awaited()
+
+
+async def test_lookup_rpg_geek_product_rejects_zero_without_calling_client():
+    client = AsyncMock()
+
+    with pytest.raises(ValueError, match="rpggeek_id"):
+        await LookupRpgGeekProductCommand(client).run(0)
+
+    client.get_product_details.assert_not_awaited()
+
+
+async def test_search_rpg_geek_rejects_a_negative_max_values_without_calling_client():
+    """Bug: max_values=-5 silently sliced as `results[:-5]`, dropping the
+    last 5 matches instead of erroring -- no local validation at all."""
+    client = AsyncMock()
+
+    with pytest.raises(ValueError, match="max_values"):
+        await SearchRpgGeekCommand(client).run(name="x", isbn=None, max_values=-5)
+
+    client.find_candidates.assert_not_awaited()
+
+
+async def test_search_rpg_geek_rejects_a_zero_max_values_without_calling_client():
+    client = AsyncMock()
+
+    with pytest.raises(ValueError, match="max_values"):
+        await SearchRpgGeekCommand(client).run(name="x", isbn=None, max_values=0)
+
+    client.find_candidates.assert_not_awaited()

@@ -9,6 +9,9 @@ class LookupRpgGeekProductCommand:
         self.client = client
 
     async def run(self, rpggeek_id: int) -> ProductLookupDetails:
+        if rpggeek_id <= 0:
+            raise ValueError(f"rpggeek_id must be a positive integer, got {rpggeek_id}")
+
         details = await self.client.get_product_details(rpggeek_id)
         return ProductLookupDetails(
             source="rpggeek",

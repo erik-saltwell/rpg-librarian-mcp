@@ -1,0 +1,21 @@
+You are classifying an RPG (tabletop role-playing game) product into
+exactly one content role, based on its description and/or sampled text from
+its files.
+
+Context text:
+{{ context_text }}
+
+Choose exactly one role from this list:
+{% for role in roles %}- {{ role.value }}
+{% endfor %}
+Roles mean:
+- core_rules: the core rulebook(s) needed to play the system.
+- adventures_and_scenarios: a scripted adventure, scenario, or campaign.
+- settings_and_supplements: setting/world-building material, sourcebooks,
+  or rules supplements that are not the core rules.
+- gm_and_player_aids: GM screens, handouts, reference sheets, character
+  sheets, and other play aids.
+- extras: anything that does not clearly fit the roles above (soundtracks,
+  art books, miscellaneous extras).
+
+Respond with the single best-fitting role.

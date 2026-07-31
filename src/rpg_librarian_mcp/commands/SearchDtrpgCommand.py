@@ -16,6 +16,9 @@ class SearchDtrpgCommand:
         scope: Literal["library", "catalog"] = "catalog",
         max_values: int = 10,
     ) -> list[ProductLookupDetails]:
+        if max_values < 1:
+            raise ValueError(f"max_values must be a positive integer, got {max_values}")
+
         results = (
             self.client.search_library(query, max_values)
             if scope == "library"

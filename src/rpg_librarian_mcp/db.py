@@ -28,15 +28,20 @@ def _setup_db(db_path: Path) -> None:
 
 
 def _create_default_claude_md(library_root: Path) -> None:
-    """Seed a starter claude.md in the library root, if one isn't already there.
+    """Seed a starter CLAUDE.md in the library root, if one isn't already there.
+
+    Uppercase filename: this is Claude Code's own project-instructions
+    convention, and filesystem lookups for it are case-sensitive on
+    Linux/macOS -- a lowercase `claude.md` here would never actually get
+    auto-loaded as project context.
 
     Never overwrites an existing file -- this only fills in a brand-new
     library's missing default, it's not a template to keep in sync.
     """
-    claude_md_path = library_root / "claude.md"
+    claude_md_path = library_root / "CLAUDE.md"
     if claude_md_path.exists():
         return
-    resource = resources.files("rpg_librarian_mcp") / "resources" / "claude.md"
+    resource = resources.files("rpg_librarian_mcp") / "resources" / "CLAUDE.md"
     claude_md_path.write_text(resource.read_text(encoding="utf-8"), encoding="utf-8")
 
 
@@ -82,13 +87,29 @@ def ensure_bootstrapped(catalog: Catalog) -> None:
 def migrate_existing(catalog: Catalog) -> None:
     """Explicit sync path: bring the current directory fully up to date.
 
-    Creates anything missing (.catalog, claude.md, the db) just like a first
-    run would, then force-syncs claude.md and every packaged skill to the
-    currently installed version, and upgrades the schema to head.
+    Creates anything missing (.catalog, CLAUDE.md, the db) just like a
+    first run would, then force-syncs CLAUDE.md and every packaged skill to
+    the currently installed version, and upgrades the schema to head.
     """
     ensure_bootstrapped(catalog)
-    resource = resources.files("rpg_librarian_mcp") / "resources" / "claude.md"
-    (catalog.library_root / "claude.md").write_text(
+
+    claude_md_path = catalog.library_root / "CLAUDE.md"
+    legacy_claude_md_path = catalog.library_root / "claude.md"
+    # A library bootstrapped before CLAUDE.md's uppercase rename has a
+    # lowercase leftover. On a case-sensitive filesystem this is a distinct,
+    # separate file from `claude_md_path` (remove it -- CLAUDE.md is about
+    # to be (re)written below anyway, matching "fully up to date", not two
+    # instruction files where only one is ever auto-loaded). On a
+    # case-insensitive filesystem the two paths already resolve to the same
+    # file, so this is a no-op.
+    if (
+        legacy_claude_md_path.exists()
+        and legacy_claude_md_path.resolve() != claude_md_path.resolve()
+    ):
+        legacy_claude_md_path.unlink()
+
+    resource = resources.files("rpg_librarian_mcp") / "resources" / "CLAUDE.md"
+    (catalog.library_root / "CLAUDE.md").write_text(
         resource.read_text(encoding="utf-8"), encoding="utf-8"
     )
     _deploy_skills(catalog.library_root, overwrite=True)
