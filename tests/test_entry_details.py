@@ -60,6 +60,21 @@ def test_raises_when_not_cataloged(tmp_path):
         get_entry_details(catalog, tmp_path / "shelf" / "box" / "book.pdf")
 
 
+def test_raises_distinct_error_for_directory_path(tmp_path):
+    """Bug: passing a directory (even one containing cataloged files) gave
+    the same "not cataloged -- run update_catalog first" message as an
+    uncataloged file, which is misleading -- a directory can never be a
+    cataloged entry, so re-running update_catalog can never fix it."""
+    catalog = _catalog(tmp_path)
+    _write_file(tmp_path, "shelf/box/book.pdf")
+    with session_scope(catalog) as session:
+        _make_entry(session, "shelf/box", "book.pdf")
+        session.commit()
+
+    with pytest.raises(ValueError, match="directory"):
+        get_entry_details(catalog, tmp_path / "shelf" / "box")
+
+
 def test_bare_entry_has_no_product_and_empty_related_rows(tmp_path):
     catalog = _catalog(tmp_path)
     _write_file(tmp_path, "shelf/box/book.pdf")

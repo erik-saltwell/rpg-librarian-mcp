@@ -20,6 +20,8 @@ class FlagForReviewCommand(UpdateBaseCommand):
 
     def __init__(self, catalog: Catalog, reason: str, max_errors: int = 50) -> None:
         super().__init__(catalog, ProcessingStage.flag_for_review, max_errors)
+        if not reason.strip():
+            raise ValueError("reason must not be empty")
         self.reason = reason
 
     def should_process(self, session: Session, entry: Entry) -> bool:

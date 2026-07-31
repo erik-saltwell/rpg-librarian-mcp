@@ -64,6 +64,16 @@ def test_open_flags_are_unique_per_entry_but_resolved_ones_are_not(tmp_path):
         session.commit()
 
 
+def test_flag_for_review_rejects_empty_reason(tmp_path):
+    """Bug: an empty (or whitespace-only) reason was silently accepted,
+    producing an open review flag that gives a human reviewer no
+    information about what needs attention."""
+    catalog = _catalog(tmp_path)
+
+    with pytest.raises(ValueError, match="reason must not be empty"):
+        FlagForReviewCommand(catalog, reason="")
+
+
 async def test_flag_for_review_creates_an_open_flag(tmp_path):
     catalog = _catalog(tmp_path)
     entry = _entry(catalog, "book.pdf")

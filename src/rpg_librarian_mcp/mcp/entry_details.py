@@ -43,6 +43,12 @@ def get_entry_details(catalog: Catalog, path: Path) -> dict[str, object]:
     resolved), and whichever type-specific metadata tables have a row."""
     relative_path = catalog.to_relative(path)
 
+    if path.is_dir():
+        raise ValueError(
+            f"{path} is a directory, not a file -- get_entry_details only "
+            "accepts a single cataloged file path"
+        )
+
     with session_scope(catalog) as session:
         entry = entry_by_exact_path(session, relative_path.parent, relative_path.name)
         if entry is None:

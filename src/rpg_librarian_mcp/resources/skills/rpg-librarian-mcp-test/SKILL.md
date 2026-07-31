@@ -51,6 +51,19 @@ These behaviors are intentional, not defects — do not report them as bugs:
   correctly errored as "too shallow". Calling `update_catalog` directly on
   the loose root-level file's own path still correctly errors it as
   too-shallow. Do not report the root-directory-scan gap as a bug.
+- `move` and `remove` both leave behind empty source directories after
+  relocating/removing the last file in them (e.g. moving the only file out
+  of `DriveThruRPG/Publisher/Product/` leaves `Publisher/` and `Product/` on
+  disk, empty). Neither tool cleans up emptied parent directories. This is
+  consistent between the two tools and is not a bug in either one — do not
+  report it.
+- `update_metadata` on a `.lys` mesh file completes with `succeeded` and
+  creates a `file_metadata` row, but does not create a `mesh_metadata` row
+  (no bounding box / surface area / unit) and records no `Error` row
+  explaining the gap. Only `.stl` mesh geometry extraction is supported
+  today; `.lys` files are correctly typed `media_type: "mesh"` but get no
+  geometry metadata. Do not report the missing `mesh_metadata` for `.lys`
+  files as a bug.
 
 ## Reporting bugs
 
