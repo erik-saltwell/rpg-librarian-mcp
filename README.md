@@ -176,21 +176,20 @@ Copy `.env.example` to `.env` at the repo root (or wherever you're running
 
 DATABASE_URL=sqlite:////home/you/data/rpgtest/.catalog/catalog.db
 
-`migrations/env.py` loads `.env` automatically (searching upward from wherever
-you run `alembic` from) before reading `DATABASE_URL` — no need to `source`
-or export it yourself. The server's own bootstrap path (`db.py`) explicitly
-sets its target db to the library root's own `.catalog/catalog.db` before
-running migrations, so it does not *intend* to read this variable at all --
-but `env.py` unconditionally lets `DATABASE_URL` override whatever caller set,
-if the variable happens to be set. In normal server use this is harmless: a
-real library root elsewhere on disk won't have this repo's `.env` anywhere
-above it, so `find_dotenv` never finds one to load. It only bites if you
-invoke the server's bootstrap code (`ensure_bootstrapped`, `--migrate`) from
-somewhere `.env`'s `DATABASE_URL` *is* discoverable upward from cwd -- e.g.
-testing against a scratch library from within this checkout -- in which case
-that stray value silently wins over the library root you meant to target.
-Export `DATABASE_URL` yourself (real env vars aren't overridden by `.env`) if
-you need to rule this out.
+`migrations/env.py` loads `.env` automatically (`load_env()` searches upward
+from the installed package's own location, not from the library root you
+launched the server in -- so this `.env` is found and read no matter which
+library the server is actually pointed at) before reading `DATABASE_URL` --
+no need to `source` or export it yourself.
+
+`DATABASE_URL` only takes effect when `sqlalchemy.url` hasn't already been
+set to something real: `alembic.ini`'s checked-in `sqlalchemy.url` is a
+placeholder, so a bare `alembic ...` CLI invocation (no other target
+configured) falls back to `DATABASE_URL`. The server's own bootstrap path
+(`db.py`) always sets its target explicitly, to the current library root's
+own `.catalog/catalog.db`, before running migrations -- that already-real
+value wins, so `DATABASE_URL` in this `.env` can never redirect a live
+server's migrations to your scratch/dev library, however it's launched.
 
 ### Running or authoring a migration
 

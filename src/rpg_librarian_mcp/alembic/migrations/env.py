@@ -10,11 +10,23 @@ from rpg_librarian_mcp.catalog import load_env
 
 config = context.config
 
-load_env()
-database_url = os.getenv("DATABASE_URL")
+# alembic.ini's checked-in sqlalchemy.url is a placeholder -- nothing is
+# ever meant to migrate against it directly. Its only job is to mark "no
+# real target configured yet", so DATABASE_URL (a dev-only override, see
+# .env.example) can fill in for it when alembic is invoked directly from
+# the CLI with no other target. When db.py calls into alembic
+# programmatically for a real server run, it already set sqlalchemy.url to
+# the actual library's db_path before this module ever loads -- that real,
+# already-configured target must always win over a stray DATABASE_URL left
+# in a checkout's .env, or a scratch/dev library sitting under this repo
+# would silently receive migrations meant for a different library root.
+_UNCONFIGURED_URL = "driver://user:pass@localhost/dbname"
 
-if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+load_env()
+if config.get_main_option("sqlalchemy.url") in (None, _UNCONFIGURED_URL):
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
