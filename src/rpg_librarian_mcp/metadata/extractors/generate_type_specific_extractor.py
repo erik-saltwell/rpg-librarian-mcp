@@ -12,6 +12,13 @@ from .pdf_extractor import PdfExtractor
 from .svg_extractor import SvgExtractor
 from .video_extractor import VideoExtractor
 
+# trimesh-loadable mesh formats. .lys (Lychee Slicer project) is also
+# classified as MediaType.mesh -- it's a real 3D-print project file and
+# catalogable as such -- but trimesh doesn't understand its internal layout
+# and raises NotImplementedError, so it's routed to NoMetadataExtractor
+# instead of MeshExtractor.
+_SUPPORTED_MESH_EXTENSIONS = {"stl", "3mf", "obj"}
+
 
 class NoMetadataExtractor(MetadataExtractor):
     def extract_value(self, field: str) -> str | None:
@@ -31,6 +38,9 @@ def generate_extractor(media_type: MediaType, file_path: Path) -> MetadataExtrac
             else:
                 return ImageExtractor(file_path)
         case MediaType.mesh:
+            extension = file_path.suffix.lower().removeprefix(".")
+            if extension not in _SUPPORTED_MESH_EXTENSIONS:
+                return NoMetadataExtractor()
             return MeshExtractor(file_path)
         case MediaType.video:
             return VideoExtractor(file_path)

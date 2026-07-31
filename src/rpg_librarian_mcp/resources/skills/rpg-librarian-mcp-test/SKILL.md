@@ -43,6 +43,14 @@ These behaviors are intentional, not defects — do not report them as bugs:
   fails, so a `PdfContents` row with those fields populated and
   `description`/`possible_system` left `null` is the correct outcome, not a
   partial-failure bug.)
+- `update_catalog`, run in directory mode (recursive or not) directly on the
+  library root itself, does not scan or report on files sitting loose in
+  that root directory -- they're excluded from `scanned` entirely, with no
+  error recorded. This differs from scanning any other directory (e.g.
+  `books/`), where a loose too-shallow file inside it *is* scanned and
+  correctly errored as "too shallow". Calling `update_catalog` directly on
+  the loose root-level file's own path still correctly errors it as
+  too-shallow. Do not report the root-directory-scan gap as a bug.
 
 ## Reporting bugs
 

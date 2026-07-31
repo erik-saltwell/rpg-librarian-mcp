@@ -21,6 +21,11 @@ async def test_all_tools_are_registered():
         "move",
         "update_metadata",
         "read_pdfs",
+        "search_rpg_geek",
+        "lookup_rpg_geek_product",
+        "search_dtrpg",
+        "lookup_isbn",
+        "update_product",
     }
 
 

@@ -14,6 +14,11 @@ still needs to be done, and pick a next step.
 | `get_catalog_schema` | complete |
 | `move` | complete |
 | `read_pdfs` | complete |
+| `search_rpg_geek` | complete |
+| `lookup_rpg_geek_product` | complete |
+| `search_dtrpg` | complete |
+| `lookup_isbn` | complete |
+| `update_product` | complete |
 
 ## Tool 0 — `update_catalog(path, process_recursively=False, force=False)`
 
@@ -549,6 +554,67 @@ ISBN/ISSN resolution order, OCR via `pytesseract`, LLM-derived
 classification (per-entry vs. hard-fail), and the checked-in LLM settings
 file.
 
+## Tools 8–9 — `search_rpg_geek`, `lookup_rpg_geek_product`, `search_dtrpg`
+
+**Status: complete.** Design reached via brainstorm on 2026-07-30,
+implemented the same day. See `.planning/rpg_lookup_spec.md` for the full
+design: vendored RPGGeek/DriveThruRPG clients (`rpggeek/client.py`,
+`dtrpg/client.py`, adapted from the sibling `rpggeek-mcp`/`dtrpg_mcp`
+projects), normalized `ProductCandidate`/`ProductLookupDetails` response
+shapes (`commands/ProductLookupResult.py`), lazy client construction
+(`mcp/rpg_geek.py`, `mcp/dtrpg.py`, `@lru_cache` factories) so a missing
+API key doesn't crash server startup, and the decision to drop a separate
+`lookup_dtrpg_product` tool (DriveThruRPG's single-item endpoint 403s
+regardless of auth; `search_dtrpg` already returns full details per hit).
+
+```python
+async def search_rpg_geek(
+    name: str | None = None, isbn: str | None = None, max_values: int = 5
+) -> list[ProductCandidate]:
+    """Search RPGGeek for candidate products by name and/or ISBN."""
+
+async def lookup_rpg_geek_product(rpggeek_id: int) -> ProductLookupDetails:
+    """Fetch full product details for an RPGGeek item by its numeric id."""
+
+def search_dtrpg(
+    query: str, scope: Literal["library", "catalog"] = "catalog", max_values: int = 10
+) -> list[ProductLookupDetails]:
+    """Search DriveThruRPG (the caller's library, or the whole catalog) for
+    products matching `query`, returning full details."""
+```
+
+Read-only for this batch — none of these three write to `Product`. A
+future `identify_product`-style write tool is explicitly deferred; see
+"Open items" in `rpg_lookup_spec.md`.
+
+## Tool 10 — `lookup_isbn(isbn)`
+
+**Status: complete.** Design reached via brainstorm on 2026-07-30,
+implemented the same day. See `.planning/isbn_lookup_spec.md` for the full
+design: vendors `~/proj/rpg-librarian`'s Google Books → Open Library →
+Wikidata fallback chain into `isbn/lookup.py`, reuses `isbn/isbn.py`'s
+existing validation instead of `isbnlib`'s own (`commands/
+LookupIsbnCommand.py` validates/normalizes first, short-circuiting to
+`None` with zero network calls for anything invalid -- including any
+ISSN), and returns the same normalized `ProductLookupDetails` shape as the
+RPGGeek/DTRPG tools (`source="isbn"`).
+
+```python
+def lookup_isbn(isbn: str) -> ProductLookupDetails | None:
+    """Look up bibliographic metadata for an ISBN (Google Books, falling
+    back to Open Library, then Wikidata). Returns None if `isbn` is
+    invalid or no provider has data for it -- not an error. Does not
+    support ISSN (periodical) lookups; an ISSN input reliably returns
+    None."""
+```
+
+Real lookup failures (network/HTTP errors from every provider, or Google
+Books itself being unusable -- quota/key/rate-limit) propagate as raised
+exceptions rather than returning `None`, so the LLM can tell "no data
+exists for this ISBN" apart from "the lookup couldn't be attempted."
+New optional env var `GOOGLE_BOOKS_API_KEY` (documented in `.env.example`
+and README once implemented).
+
 ## Resolved: never-scanned directories and result caps
 
 1. **Never-scanned directories are surfaced, with zero counts.** A directory
@@ -581,3 +647,41 @@ file.
    (default ~100, hard max ~1000), keeps its existing sort-by-
    `without_product`-descending, returns only the top `limit` rows, and
    sets `truncated: true` if more rows existed beyond the cap.
+
+## Tool 11 — `update_product(path, title, identification_method, ...)`
+
+**Status: complete.** Design reached via brainstorm on 2026-07-30,
+implemented the same day. See `.planning/update_product_spec.md` for the
+full design and implementation notes. This is the
+`identify_product`-style write tool `rpg_lookup_spec.md`'s "Open items"
+explicitly deferred: find-or-create a `Product` from caller-supplied
+details, then link every entry under `path` to it.
+
+```python
+async def update_product(
+    path: Path,
+    title: str,
+    identification_method: IdentificationMethod,
+    ctx: Context,
+    process_recursively: bool = False,
+    description: str | None = None,
+    artists: str | None = None,
+    publisher: str | None = None,
+    year: str | None = None,
+    system: str | None = None,
+) -> dict[str, object]:
+    """Find or create a Product matching the given details, then link
+    every entry under `path` to it."""
+```
+
+No `force` param — every entry under `path` whose `product_id` doesn't
+already match the resolved product gets overwritten unconditionally, so
+there's no "stale result" concept to bypass. Response shape adds
+`product_id` and `created` (bool) to the usual scan-stats shape:
+
+```json
+{
+  "scanned": 3, "skipped": 1, "succeeded": 2, "errored": 0, "errors": [],
+  "product_id": "…", "created": true
+}
+```

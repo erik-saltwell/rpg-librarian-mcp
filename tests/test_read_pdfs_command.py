@@ -86,14 +86,13 @@ def _no_llm_call(monkeypatch) -> None:
     )
 
 
-async def test_should_process_is_false_for_non_pdf_entries(tmp_path):
+async def test_in_scope_is_false_for_non_pdf_entries(tmp_path):
     await _catalog_text_file(tmp_path, "book.txt")
     catalog = _catalog(tmp_path)
     entry = _get_entry(catalog, "book.txt")
     command = _command(catalog)
 
-    with session_scope(catalog) as session:
-        assert command.should_process(session, entry) is False
+    assert command.in_scope(entry) is False
 
 
 async def test_should_process_is_true_when_no_pdfcontents_exists(tmp_path):
@@ -139,6 +138,26 @@ async def test_should_process_is_true_again_when_an_error_row_exists(tmp_path):
 
     with session_scope(catalog) as session:
         assert command.should_process(session, entry) is True
+
+
+async def test_force_still_skips_non_pdf_entries(tmp_path, monkeypatch):
+    """Bug: force=True bypassed should_process entirely, including its
+    media_type != pdf guard, so non-PDF entries fell through to process_one
+    and errored (fitz.open on a .txt, "not supported" on non-PDF types)
+    instead of being skipped."""
+    await _catalog_text_file(tmp_path, "notes.txt")
+    _no_tesseract_check(monkeypatch)
+
+    def _fail_if_opened(file_path):
+        raise AssertionError("must not attempt to open a non-PDF entry")
+
+    monkeypatch.setattr(read_pdfs_module.fitz, "open", _fail_if_opened)
+    command = _command(_catalog(tmp_path))
+
+    result = await command.process(tmp_path, True, True, AsyncMock())
+
+    assert result.skipped == 1
+    assert result.errored == 0
 
 
 async def test_password_protected_pdf_is_skipped_not_erroed(tmp_path, monkeypatch):

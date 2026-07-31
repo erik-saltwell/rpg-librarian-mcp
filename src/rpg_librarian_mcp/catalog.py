@@ -15,13 +15,16 @@ DB_FILENAME = "catalog.db"
 def load_env() -> str | None:
     """Load a .env file into ``os.environ``.
 
-    Searches upward from the current working directory -- the library root the
-    server was started in, not this repo. A missing .env is fine. Existing
-    environment variables win over file values.
+    Searches upward from this module's location (the installed package/repo),
+    not the current working directory -- the library root the server was
+    started in generally has no .env of its own, and API credentials belong
+    with the server installation, not with whatever library it happens to be
+    pointed at. A missing .env is fine. Existing environment variables win
+    over file values.
 
     Returns the path of the file that was loaded, or None.
     """
-    path = find_dotenv(usecwd=True)
+    path = find_dotenv()
     if not path:
         return None
     load_dotenv(path, override=False)

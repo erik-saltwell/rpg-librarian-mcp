@@ -49,6 +49,17 @@ class UpdateBaseCommand(CommandProtocol, ABC):
         self.processing_stage = processing_stage
         self.max_errors = max_errors
 
+    def in_scope(self, entry: Entry) -> bool:
+        """Whether `entry`'s type is one this command ever processes.
+
+        Unlike `should_process`, this is a hard type filter, not a staleness
+        check -- it applies even when `force=True`, so e.g. `read_pdfs`
+        never attempts to open a non-PDF file just because `force` was
+        passed. Defaults to true (no type restriction); override for
+        commands that only handle a subset of media types.
+        """
+        return True
+
     @abstractmethod
     def should_process(self, session: Session, entry: Entry) -> bool:
         """Whether `entry`'s existing result (if any) is stale or missing."""
@@ -142,7 +153,9 @@ class UpdateBaseCommand(CommandProtocol, ABC):
                 scanned += 1
                 entry_relative_path = entry.path
 
-                if not force and not self.should_process(session, entry):
+                if not self.in_scope(entry) or (
+                    not force and not self.should_process(session, entry)
+                ):
                     skipped += 1
                 else:
                     file_path = self.catalog.to_absolute(entry_relative_path)

@@ -756,6 +756,15 @@ wheels = [
 ]
 
 [[package]]
+name = "isbnlib"
+version = "3.10.14"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9e/6d/55b9ee89fdfb3aacb92b975a60357c7aa547db358817e16be3b6f8f5d781/isbnlib-3.10.14.tar.gz", hash = "sha256:96f90864c77b01f55fa11e5bfca9fd909501d9842f3bc710d4eab85195d90539", size = 48046, upload-time = "2023-04-26T08:53:05.486Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/ce/1eb1e2afaca49add3185e202ce9c2c6d5779b7eecb20973e43ad804eb2a4/isbnlib-3.10.14-py2.py3-none-any.whl", hash = "sha256:f885b350fc8e600a919ed46e3b07253062cd604af69885455a25a299217b3fe2", size = 52535, upload-time = "2023-04-26T08:53:03.024Z" },
+]
+
+[[package]]
 name = "jaraco-classes"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1832,6 +1841,8 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "fastmcp" },
+    { name = "httpx" },
+    { name = "isbnlib" },
     { name = "jinja2" },
     { name = "litellm" },
     { name = "mutagen" },
@@ -1844,6 +1855,8 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-magic" },
     { name = "pyyaml" },
+    { name = "requests" },
+    { name = "setuptools" },
     { name = "sqlmodel" },
     { name = "trimesh" },
     { name = "zxing-cpp" },
@@ -1862,6 +1875,8 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.18.5" },
     { name = "fastmcp", specifier = ">=3.0" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "isbnlib", specifier = ">=3.10.14" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "litellm", specifier = ">=1.60" },
     { name = "mutagen", specifier = ">=1.48.1" },
@@ -1874,6 +1889,8 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "python-magic", specifier = ">=0.4.27" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "requests", specifier = ">=2.32" },
+    { name = "setuptools", specifier = ">=80.0,<82" },
     { name = "sqlmodel", specifier = ">=0.0.39" },
     { name = "trimesh", specifier = ">=4.12.2" },
     { name = "zxing-cpp", specifier = ">=3.1.1" },
@@ -1924,6 +1941,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/46/f5af3402b579fd5e11573ce652019a67074317e18c1935cc0b4ba9b35552/secretstorage-3.5.0-py3-none-any.whl", hash = "sha256:0ce65888c0725fcb2c5bc0fdb8e5438eece02c523557ea40ce0703c266248137", size = 15554, upload-time = "2025-11-23T19:02:51.545Z" },
+]
+
+[[package]]
+name = "setuptools"
+version = "81.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/1c/73e719955c59b8e424d015ab450f51c0af856ae46ea2da83eba51cc88de1/setuptools-81.0.0.tar.gz", hash = "sha256:487b53915f52501f0a79ccfd0c02c165ffe06631443a886740b91af4b7a5845a", size = 1198299, upload-time = "2026-02-06T21:10:39.601Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/e3/c164c88b2e5ce7b24d667b9bd83589cf4f3520d97cad01534cd3c4f55fdb/setuptools-81.0.0-py3-none-any.whl", hash = "sha256:fdd925d5c5d9f62e4b74b30d6dd7828ce236fd6ed998a08d81de62ce5a6310d6", size = 1062021, upload-time = "2026-02-06T21:10:37.175Z" },
 ]
 
 [[package]]

@@ -159,6 +159,34 @@ async def test_corrupted_pdf_is_recorded_as_an_error_not_a_silent_success(tmp_pa
         assert errors[0].stage == ProcessingStage.extract_metadata
 
 
+async def test_lys_mesh_file_is_not_errored(tmp_path):
+    """Bug (errors.md): .lys (Lychee Slicer project) is classified as
+    media_type=mesh, so it's routed to MeshExtractor, but trimesh doesn't
+    actually support the format and raises NotImplementedError -- surfacing
+    as an errored entry instead of succeeding with no type-specific metadata,
+    unlike read_pdfs's skip-not-error handling of non-matching file types.
+
+    Real .lys files are zip containers (like .3mf), so mime sniffing falls
+    back to the extension -- a real zip archive is written here so the file
+    is classified as media_type=mesh the same way, rather than text."""
+    import zipfile
+
+    shelf = tmp_path / "shelf" / "box"
+    shelf.mkdir(parents=True)
+    with zipfile.ZipFile(shelf / "model.lys", "w") as zf:
+        zf.writestr("not_a_real_model", "placeholder")
+    catalog = _catalog(tmp_path)
+    await UpdateCatalogCommand(catalog).process(tmp_path, True, False, AsyncMock())
+    command = UpdateMetadataCommand(catalog, ProcessingStage.extract_metadata)
+
+    result = await command.process(tmp_path, True, False, AsyncMock())
+
+    assert result.errored == 0
+    assert result.succeeded == 1
+    with session_scope(catalog) as session:
+        assert session.exec(select(Error)).all() == []
+
+
 async def test_extractor_failure_is_recorded_as_an_error(tmp_path, monkeypatch):
     await _catalog_file(tmp_path, "shelf/box", "book.txt", "hello")
     catalog = _catalog(tmp_path)

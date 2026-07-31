@@ -97,6 +97,54 @@ following `litellm`'s own
 [provider docs](https://docs.litellm.ai/docs/providers) for the exact
 variable name. See `.env.example`.
 
+### `search_rpg_geek` / `lookup_rpg_geek_product`: RPGGeek credentials
+
+These call the [RPGGeek](https://rpggeek.com) XML API. Basic search/lookup
+works unauthenticated — `RPGGEEK_BEARER_TOKEN` in your `.env` is optional,
+only needed to raise RPGGeek's rate limits. See `.env.example`.
+
+### `search_dtrpg`: DriveThruRPG credentials
+
+This calls the DriveThruRPG vBeta API and **requires** `DTRPG_API_KEY` in
+your `.env` — an application key from your DriveThruRPG account. Without
+it, this tool fails with a clear error on first use; the rest of the
+server is unaffected. See `.env.example`.
+
+### `lookup_isbn`: Google Books credentials (optional)
+
+`lookup_isbn` falls back Google Books → Open Library → Wikidata. It works
+with no configuration — Open Library and Wikidata need no key — but
+`GOOGLE_BOOKS_API_KEY` in your `.env` is recommended: it gets a much
+higher quota than Google Books' anonymous access, and Google Books is the
+only one of the three that returns a description in the same response.
+See `.env.example`.
+
+### Recommended companion: Open Library MCP server
+
+[`openlibrary-mcp-server`](https://github.com/cyanheads/openlibrary-mcp-server)
+gives the model direct access to the Open Library API — searching books and
+authors, fetching editions, browsing subjects, and resolving cover images —
+which is useful alongside `rpg-librarian-mcp` for identifying and enriching
+cataloged products. It requires no API key.
+
+Install and register it with Claude Code:
+
+    claude mcp add openlibrary-mcp-server -- npx -y @cyanheads/openlibrary-mcp-server@latest
+
+Or add it directly to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "openlibrary-mcp-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@cyanheads/openlibrary-mcp-server@latest"]
+    }
+  }
+}
+```
+
 ## Running
 
 rpg-librarian-mcp

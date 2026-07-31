@@ -45,10 +45,12 @@ class ReadPdfsCommand(UpdateBaseCommand):
         check_tesseract_available()
         return await super().process(starting_path, process_recursively, force, ctx)
 
+    def in_scope(self, entry: Entry) -> bool:
+        """Non-PDF entries are never processed, force or not."""
+        return entry.media_type == MediaType.pdf
+
     def should_process(self, session: Session, entry: Entry) -> bool:
         """True only for PDFs with no PdfContents row, or with a stale error."""
-        if entry.media_type != MediaType.pdf:
-            return False
         existing_contents = session.get(PdfContents, entry.id)
         existing_error = session.get(Error, (entry.id, self.processing_stage))
         return existing_contents is None or existing_error is not None
