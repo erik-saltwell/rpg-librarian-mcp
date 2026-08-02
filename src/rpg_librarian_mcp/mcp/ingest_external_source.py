@@ -12,6 +12,7 @@ from sqlmodel import select
 from ..catalog import Catalog
 from ..db import session_scope
 from ..model import Entry
+from ..observability import log_event_fields
 from ..tools.sha256 import generate_sha256
 
 REPORT_FILENAME = "_ingest_report.md"
@@ -135,6 +136,11 @@ def ingest_external_source(
     report_path = inbox_absolute / REPORT_FILENAME
     _write_report(report_path, name, copied, skipped)
 
+    log_event_fields(
+        scanned=len(copied) + len(skipped),
+        copied=len(copied),
+        skipped_duplicate=len(skipped),
+    )
     return {
         "source_path": str(source_path),
         "name": name,

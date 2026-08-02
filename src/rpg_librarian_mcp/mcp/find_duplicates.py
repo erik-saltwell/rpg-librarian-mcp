@@ -10,6 +10,7 @@ from sqlmodel import select
 from ..catalog import Catalog
 from ..db import session_scope
 from ..model import Entry
+from ..observability import log_event_fields
 from ..tools.entry_queries import entries_under
 
 
@@ -58,12 +59,16 @@ def find_duplicates(catalog: Catalog, path: Path | None = None) -> dict[str, obj
         for sha256 in duplicate_hashes
     ]
 
+    duplicate_group_count = len(groups)
+    duplicate_file_count = sum(len(by_hash[sha256]) for sha256 in duplicate_hashes)
+    log_event_fields(
+        duplicate_group_count=duplicate_group_count,
+        duplicate_file_count=duplicate_file_count,
+    )
     return {
         "duplicate_groups": groups,
-        "duplicate_group_count": len(groups),
-        "duplicate_file_count": sum(
-            len(by_hash[sha256]) for sha256 in duplicate_hashes
-        ),
+        "duplicate_group_count": duplicate_group_count,
+        "duplicate_file_count": duplicate_file_count,
     }
 
 

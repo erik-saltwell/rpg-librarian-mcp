@@ -5,10 +5,12 @@ from __future__ import annotations
 import logging
 import sys
 
+import structlog
 from fastmcp import FastMCP
 
 from .catalog import Catalog, load_env
 from .mcp import REGISTRARS
+from .observability import ToolCallLoggingMiddleware
 
 log = logging.getLogger(__name__)
 
@@ -22,12 +24,27 @@ def configure_logging() -> None:
     )
 
 
+# structlog's unconfigured default renders to stdout, which would corrupt the
+# stdio transport -- configure it at import time so every path to
+# `create_server()` (tests included, not just `run()`) gets stderr JSON.
+structlog.configure(
+    processors=[
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.add_log_level,
+        structlog.processors.JSONRenderer(),
+    ],
+    logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+    cache_logger_on_first_use=True,
+)
+
+
 def create_server() -> FastMCP:
     """Build the server with all tools registered."""
     env_path = load_env()
     config = Catalog.from_cwd()
 
     mcp = FastMCP(name="rpg-librarian-mcp")
+    mcp.add_middleware(ToolCallLoggingMiddleware())
     for register in REGISTRARS:
         register(mcp, config)
 

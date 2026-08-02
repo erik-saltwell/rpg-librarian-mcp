@@ -12,6 +12,7 @@ from ..db import session_scope
 from ..model import Entry, Error
 from ..model.MediaType import MediaType
 from ..model.ProcessingStage import ProcessingStage
+from ..observability import log_event_fields
 from ..tools.entry_queries import entries_by_parent, entries_under
 from ..tools.media_type import detect_media_type, detect_mime_type
 from ..tools.path_helper import walk_filesystem
@@ -207,6 +208,12 @@ class UpdateCatalogCommand:
                         session.delete(entry)
                         removed += 1
                 session.commit()
+        log_event_fields(
+            scanned=scanned,
+            skipped=skipped,
+            successfully_processed=successfully_processed,
+            removed=removed,
+        )
         return UpdateCatalogResult(
             scanned=scanned,
             skipped=skipped,

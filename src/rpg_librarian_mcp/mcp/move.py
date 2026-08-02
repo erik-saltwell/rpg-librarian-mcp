@@ -9,6 +9,7 @@ from sqlmodel import Session
 
 from ..catalog import Catalog
 from ..db import session_scope
+from ..observability import log_event_fields
 from ..tools.entry_queries import entries_under, entry_by_exact_path
 
 
@@ -107,6 +108,9 @@ def move(catalog: Catalog, source: Path, destination: Path) -> dict[str, object]
         source_absolute.rename(destination_absolute)
         session.commit()
 
+    log_event_fields(
+        kind="folder" if is_dir else "file", entries_updated=entries_updated
+    )
     return {
         "source": str(source_relative),
         "destination": str(destination_relative),

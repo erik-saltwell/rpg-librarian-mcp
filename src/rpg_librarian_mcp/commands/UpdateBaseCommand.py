@@ -11,6 +11,7 @@ from ..catalog import Catalog
 from ..db import session_scope
 from ..model import Entry, Error
 from ..model.ProcessingStage import ProcessingStage
+from ..observability import log_event_fields
 from ..tools.entry_queries import entries_by_parent, entries_under, entry_by_exact_path
 from .CommandProtocol import CommandProtocol
 from .ProcessingError import ProcessingError
@@ -183,6 +184,9 @@ class UpdateBaseCommand(CommandProtocol, ABC):
                     )
                 last_reported_percent = percent
 
+        log_event_fields(
+            scanned=scanned, skipped=skipped, succeeded=succeeded, errored=errored
+        )
         return UpdateResult(
             scanned=scanned,
             skipped=skipped,
