@@ -86,7 +86,18 @@ def _extract_3mf_metadata(path: Path) -> dict[str, str]:
 
 
 def get_extents_from_mesh(mesh: trimesh.Trimesh) -> BoundingBoxExtents:
-    extents = mesh.bounding_box.extents
+    """Axis-aligned extents, not the minimum-oriented bounding box.
+
+    `mesh.bounding_box` computes a convex hull (via scipy/Qhull) to find the
+    minimum-volume oriented box -- for a dense, complex mesh (e.g. a 3D print
+    file with thousands of thin support struts) that hull computation can
+    blow up in memory/time badly enough to crash the whole process. `bounds`
+    is a plain min/max over vertices: no hull, no scipy, no equivalent
+    failure mode -- at the cost of being larger than the true minimum box
+    for a mesh that isn't axis-aligned.
+    """
+    bounds_min, bounds_max = mesh.bounds
+    extents = bounds_max - bounds_min
     return BoundingBoxExtents(
         x_mm=round(float(extents[0]), 4),
         y_mm=round(float(extents[1]), 4),
