@@ -11,6 +11,7 @@ from ..isbn import isbn, issn
 from ..llm.pdf_judgment import judge_pdf_contents
 from ..metadata.extractors.pdf_extractor import PdfExtractor
 from ..model import Entry, Error, MediaType, PdfContents
+from ..observability import log_entry_fields
 from ..progress import ProgressReporter
 from ..tools.barcode import find_isbn_or_issn_barcode
 from ..tools.ocr import check_tesseract_available
@@ -72,6 +73,10 @@ class ReadPdfsCommand(UpdateBaseCommand):
         finally:
             doc.close()
 
+        log_entry_fields(
+            page_count=page_count, barcode_matched=barcode_match is not None
+        )
+
         content = "\n".join(page_texts.values())
 
         pdf_isbn = barcode_match.isbn if barcode_match else None
@@ -101,7 +106,9 @@ class ReadPdfsCommand(UpdateBaseCommand):
         session.merge(pdf_contents)
         session.commit()
 
-        if content.strip():
+        llm_judged = bool(content.strip())
+        log_entry_fields(llm_judged=llm_judged)
+        if llm_judged:
             judgment = judge_pdf_contents(sample_text_json(page_texts))
             pdf_contents.description = judgment.description
             pdf_contents.possible_system = judgment.possible_system

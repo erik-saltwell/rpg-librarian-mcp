@@ -10,7 +10,7 @@ from fastmcp import FastMCP
 
 from .catalog import Catalog, load_env
 from .mcp import REGISTRARS
-from .observability import ToolCallLoggingMiddleware
+from .observability import ToolCallLoggingMiddleware, configure_wide_event_logs
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ def create_server() -> FastMCP:
     """Build the server with all tools registered."""
     env_path = load_env()
     config = Catalog.from_cwd()
+    configure_wide_event_logs(config.catalog_dir)
 
     mcp = FastMCP(name="rpg-librarian-mcp")
     mcp.add_middleware(ToolCallLoggingMiddleware())

@@ -12,6 +12,7 @@ from rpg_librarian_mcp.commands.ReadPdfsCommand import ReadPdfsCommand
 from rpg_librarian_mcp.commands.UpdateCatalogCommand import UpdateCatalogCommand
 from rpg_librarian_mcp.db import session_scope
 from rpg_librarian_mcp.model import Entry, Error, PdfContents, ProcessingStage
+from rpg_librarian_mcp.observability import EntryTracker
 from rpg_librarian_mcp.tools import text_extraction
 
 
@@ -209,6 +210,47 @@ async def test_process_one_persists_barcode_match_and_sample_text(
         assert contents.issn is None
         assert contents.sample_text is not None
         assert "pages" in contents.sample_text
+
+
+async def test_process_one_reports_pdf_page_instrumentation(tmp_path, monkeypatch):
+    """`process_one` reports page-level instrumentation (total pages, the
+    direct-extraction/OCR split, whether a barcode matched, whether the LLM
+    judgment step ran) via `log_entry_fields` -- exactly the "chattiest/most
+    costly" signal the entry log exists for."""
+    catalog = _catalog(tmp_path)
+    _insert_pdf_entry(catalog)
+    entry = _get_entry(catalog, "book.pdf")
+    _no_tesseract_check(monkeypatch)
+    _no_llm_call(monkeypatch)
+    _no_barcode_match(monkeypatch)
+    monkeypatch.setattr(
+        read_pdfs_module.fitz, "open", lambda file_path: _Doc(page_count=3)
+    )
+    monkeypatch.setattr(
+        read_pdfs_module.PdfExtractor, "__init__", lambda self, file_path: None
+    )
+    monkeypatch.setattr(
+        read_pdfs_module.PdfExtractor, "extract_isbn", lambda self: None
+    )
+    monkeypatch.setattr(
+        read_pdfs_module.PdfExtractor, "extract_issn", lambda self: None
+    )
+    command = _command(catalog)
+
+    with (
+        session_scope(catalog) as session,
+        EntryTracker("read_pdfs", entry.id, entry.path) as tracker,
+    ):
+        command.process_one(session, catalog.to_absolute(entry.path), entry)
+
+    assert tracker.entry_fields["page_count"] == 3
+    assert tracker.entry_fields["barcode_matched"] is False
+    assert tracker.entry_fields["llm_judged"] is True
+    assert tracker.entry_fields["pages_ocr"] == 0
+    assert (
+        tracker.entry_fields["pages_direct_extraction"]
+        == tracker.entry_fields["pages_sampled"]
+    )
 
 
 async def test_process_one_skips_llm_when_sample_text_is_empty(tmp_path, monkeypatch):

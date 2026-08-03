@@ -1,4 +1,5 @@
 import importlib
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,11 @@ from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.commands.UpdateCatalogCommand import UpdateCatalogCommand
 from rpg_librarian_mcp.db import session_scope
 from rpg_librarian_mcp.model import Entry, Error
+from rpg_librarian_mcp.observability import (
+    ENTRY_PROCESSING_FILENAME,
+    CallTracker,
+    configure_wide_event_logs,
+)
 from rpg_librarian_mcp.progress import McpProgressReporter
 
 command_module = importlib.import_module(
@@ -18,6 +24,14 @@ command_module = importlib.import_module(
 
 def _catalog(tmp_path: Path) -> Catalog:
     return Catalog(library_root=tmp_path)
+
+
+def _entry_log_events(catalog_dir: Path) -> list[dict]:
+    log_path = catalog_dir / ENTRY_PROCESSING_FILENAME
+    if not log_path.exists():
+        return []
+    events = [json.loads(line) for line in log_path.read_text().splitlines()]
+    return [event for event in events if event["event"] == "entry_processed"]
 
 
 def _make_book(tmp_path: Path) -> Path:
@@ -353,3 +367,170 @@ async def test_directory_mode_at_root_self_heals_phantom_row(poisoned_catalog):
     with session_scope(catalog) as session:
         remaining = {e.filename for e in session.exec(select(Entry)).all()}
         assert remaining == {"book.txt"}
+
+
+async def test_new_file_emits_started_and_success_entry_log_lines(tmp_path):
+    _make_book(tmp_path)
+    catalog = _catalog(tmp_path)
+    configure_wide_event_logs(catalog.catalog_dir)
+    command = UpdateCatalogCommand(catalog)
+
+    await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    events = _entry_log_events(catalog.catalog_dir)
+    assert [event["outcome"] for event in events] == ["started", "success"]
+    for event in events:
+        assert event["entry_path"] == "shelf/box/book.txt"
+        assert event["command"] == "UpdateCatalogCommand"
+
+
+async def test_success_entry_log_line_breaks_down_hash_vs_db_time(tmp_path):
+    """The success line reports `compute_ms` (hashing/mime-sniffing) and
+    `db_write_ms` (add/flush/commit) as separate fields -- so a slow
+    `update-catalog` run can be attributed to file hashing vs. database
+    round trips instead of just an opaque total duration."""
+    _make_book(tmp_path)
+    catalog = _catalog(tmp_path)
+    configure_wide_event_logs(catalog.catalog_dir)
+    command = UpdateCatalogCommand(catalog)
+
+    await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    success_event = next(
+        event
+        for event in _entry_log_events(catalog.catalog_dir)
+        if event["outcome"] == "success"
+    )
+    assert isinstance(success_event["existing_lookup_ms"], float)
+    assert isinstance(success_event["compute_ms"], float)
+    assert isinstance(success_event["db_write_ms"], float)
+
+
+async def test_error_entry_log_line_still_reports_compute_and_db_time(
+    tmp_path, monkeypatch
+):
+    _make_book(tmp_path)
+    catalog = _catalog(tmp_path)
+    configure_wide_event_logs(catalog.catalog_dir)
+    command = UpdateCatalogCommand(catalog)
+    monkeypatch.setattr(
+        command_module,
+        "generate_sha256",
+        lambda path: (_ for _ in ()).throw(ValueError("boom")),
+    )
+
+    await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    error_event = next(
+        event
+        for event in _entry_log_events(catalog.catalog_dir)
+        if event["outcome"] == "error"
+    )
+    assert isinstance(error_event["compute_ms"], float)
+    assert isinstance(error_event["db_write_ms"], float)
+
+
+async def test_skipped_entry_log_line_reports_the_existing_lookup_time(tmp_path):
+    _make_book(tmp_path)
+    catalog = _catalog(tmp_path)
+    configure_wide_event_logs(catalog.catalog_dir)
+    command = UpdateCatalogCommand(catalog)
+    await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    skipped_event = next(
+        event
+        for event in _entry_log_events(catalog.catalog_dir)
+        if event["outcome"] == "skipped"
+    )
+    assert isinstance(skipped_event["existing_lookup_ms"], float)
+
+
+async def test_skipped_file_emits_a_lightweight_entry_log_line(tmp_path):
+    _make_book(tmp_path)
+    catalog = _catalog(tmp_path)
+    configure_wide_event_logs(catalog.catalog_dir)
+    command = UpdateCatalogCommand(catalog)
+    await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    assert result.skipped == 1
+    events = _entry_log_events(catalog.catalog_dir)
+    skipped_events = [event for event in events if event["outcome"] == "skipped"]
+    assert len(skipped_events) == 1
+    assert "duration_ms" not in skipped_events[0]
+
+
+async def test_compute_failure_emits_an_error_entry_log_line(tmp_path, monkeypatch):
+    _make_book(tmp_path)
+    catalog = _catalog(tmp_path)
+    configure_wide_event_logs(catalog.catalog_dir)
+    command = UpdateCatalogCommand(catalog)
+    monkeypatch.setattr(
+        command_module,
+        "generate_sha256",
+        lambda path: (_ for _ in ()).throw(ValueError("boom")),
+    )
+
+    await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    events = _entry_log_events(catalog.catalog_dir)
+    assert [event["outcome"] for event in events] == ["started", "error"]
+    error_event = events[1]
+    assert error_event["error_type"] == "ValueError"
+    assert error_event["error_message"] == "boom"
+    assert "traceback" not in error_event
+
+
+async def test_too_shallow_path_emits_an_entry_log_error_with_no_entry_id(tmp_path):
+    (tmp_path / "roottest.txt").write_text("hello world")
+    catalog = _catalog(tmp_path)
+    configure_wide_event_logs(catalog.catalog_dir)
+    command = UpdateCatalogCommand(catalog)
+
+    await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    events = _entry_log_events(catalog.catalog_dir)
+    assert len(events) == 1
+    assert events[0]["outcome"] == "error"
+    assert events[0]["entry_id"] is None
+    assert "too shallow" in events[0]["error_message"]
+    assert "duration_ms" not in events[0]
+
+
+async def test_entry_log_lines_carry_the_enclosing_call_ids_call_id(tmp_path):
+    _make_book(tmp_path)
+    catalog = _catalog(tmp_path)
+    configure_wide_event_logs(catalog.catalog_dir)
+    command = UpdateCatalogCommand(catalog)
+
+    with CallTracker("update_catalog", transport="cli") as tracker:
+        await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    events = _entry_log_events(catalog.catalog_dir)
+    assert all(event["call_id"] == tracker.call_id for event in events)
+
+
+async def test_fatal_style_failure_still_reports_partial_counts_on_the_command_event(
+    tmp_path, monkeypatch
+):
+    """Even though `UpdateCatalogCommand` has no `fatal_exceptions` concept of
+    its own, the per-file counts are still updated incrementally (not just
+    once at the end), so a bug that aborted the loop early would still leave
+    the command-level event showing accurate partial counts rather than
+    zeros."""
+    for name in ("a", "b"):
+        d = tmp_path / "shelf" / name
+        d.mkdir(parents=True)
+        (d / "book.txt").write_text(name)
+    catalog = _catalog(tmp_path)
+    configure_wide_event_logs(catalog.catalog_dir)
+    command = UpdateCatalogCommand(catalog)
+
+    with CallTracker("update_catalog", transport="cli") as tracker:
+        await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    assert tracker.event_fields["scanned"] == 2
+    assert tracker.event_fields["successfully_processed"] == 2

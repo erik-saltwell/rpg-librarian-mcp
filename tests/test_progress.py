@@ -12,7 +12,12 @@ async def test_cli_reporter_renders_the_specified_format(capsys):
         await update(3, "c.txt", 1)
 
     err = capsys.readouterr().err
-    assert "Processing: c.txt - 1 errors - 3/3" in err
+    assert "Processing" in err
+    assert "3/3" in err
+    assert "1 errors" in err
+    # Filename renders after the count/errors/bar, so its variable length
+    # can't shift those fixed-width fields around.
+    assert err.index("c.txt") > err.index("3/3")
 
 
 async def test_mcp_reporter_message_matches_the_shared_format():

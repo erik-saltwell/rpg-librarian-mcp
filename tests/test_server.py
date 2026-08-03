@@ -1,12 +1,20 @@
 import contextlib
+import json
 from pathlib import Path
-
-from structlog.testing import capture_logs
 
 from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.db import session_scope
 from rpg_librarian_mcp.model import Entry
+from rpg_librarian_mcp.observability import TOOL_CALLS_FILENAME
 from rpg_librarian_mcp.server import create_server
+
+
+def _tool_call_events(catalog_dir: Path) -> list[dict]:
+    log_path = catalog_dir / TOOL_CALLS_FILENAME
+    if not log_path.exists():
+        return []
+    events = [json.loads(line) for line in log_path.read_text().splitlines()]
+    return [event for event in events if event["event"] == "tool_call"]
 
 
 async def test_all_tools_are_registered():
@@ -37,6 +45,7 @@ async def test_all_tools_are_registered():
         "resolve_review_flag",
         "list_review_items",
         "get_entry_details",
+        "clear_logs",
     }
 
 
@@ -86,24 +95,27 @@ async def test_list_directory_entries_round_trips_through_the_registered_tool(
 
 async def test_tool_call_emits_one_wide_event_on_success(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    config = Catalog.from_cwd()
     mcp = create_server()
 
-    with capture_logs() as logs:
-        await mcp.call_tool("librarian_status", {})
+    await mcp.call_tool("librarian_status", {})
 
-    tool_call_logs = [entry for entry in logs if entry["event"] == "tool_call"]
+    tool_call_logs = _tool_call_events(config.catalog_dir)
     assert len(tool_call_logs) == 1
     entry = tool_call_logs[0]
-    assert entry["tool"] == "librarian_status"
+    assert entry["command"] == "librarian_status"
+    assert entry["transport"] == "mcp"
     assert entry["outcome"] == "success"
     assert isinstance(entry["duration_ms"], float)
+    assert "call_id" in entry
 
 
 async def test_tool_call_emits_one_wide_event_on_error(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    config = Catalog.from_cwd()
     mcp = create_server()
 
-    with capture_logs() as logs, contextlib.suppress(Exception):
+    with contextlib.suppress(Exception):
         await mcp.call_tool(
             "move",
             {
@@ -112,10 +124,10 @@ async def test_tool_call_emits_one_wide_event_on_error(tmp_path, monkeypatch):
             },
         )
 
-    tool_call_logs = [entry for entry in logs if entry["event"] == "tool_call"]
+    tool_call_logs = _tool_call_events(config.catalog_dir)
     assert len(tool_call_logs) == 1
     entry = tool_call_logs[0]
-    assert entry["tool"] == "move"
+    assert entry["command"] == "move"
     assert entry["outcome"] == "error"
     assert "error_type" in entry or "error_message" in entry
     assert isinstance(entry["duration_ms"], float)
@@ -126,21 +138,38 @@ async def test_tool_call_wide_event_carries_tool_specific_fields(tmp_path, monke
     `log_event_fields`, and they should land in the same wide event -- not a
     second log line."""
     monkeypatch.chdir(tmp_path)
+    config = Catalog.from_cwd()
     source = tmp_path / "book.txt"
     source.write_text("hello")
     destination = tmp_path / "shelf" / "box" / "book.txt"
 
     mcp = create_server()
-    with capture_logs() as logs:
-        await mcp.call_tool(
-            "move", {"source": str(source), "destination": str(destination)}
-        )
+    await mcp.call_tool(
+        "move", {"source": str(source), "destination": str(destination)}
+    )
 
-    tool_call_logs = [entry for entry in logs if entry["event"] == "tool_call"]
+    tool_call_logs = _tool_call_events(config.catalog_dir)
     assert len(tool_call_logs) == 1
     entry = tool_call_logs[0]
     assert entry["kind"] == "file"
     assert entry["entries_updated"] == 0
+
+
+async def test_clear_logs_deletes_and_reopens_both_log_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = Catalog.from_cwd()
+    mcp = create_server()
+    await mcp.call_tool("librarian_status", {})  # writes a first line
+
+    result = await mcp.call_tool("clear_logs", {})
+
+    assert result.structured_content == {
+        "tool_calls_log_cleared": True,
+        "entry_processing_log_cleared": True,
+    }
+    tool_call_logs = _tool_call_events(config.catalog_dir)
+    assert len(tool_call_logs) == 1
+    assert tool_call_logs[0]["command"] == "clear_logs"
 
 
 async def test_tool_call_wide_event_carries_fields_from_an_async_tool(
@@ -149,17 +178,17 @@ async def test_tool_call_wide_event_carries_fields_from_an_async_tool(
     """`update_catalog` is an async tool (no threadpool hop), covering the
     other dispatch path `log_event_fields` needs to work from."""
     monkeypatch.chdir(tmp_path)
+    config = Catalog.from_cwd()
     (tmp_path / "shelf" / "box").mkdir(parents=True)
     (tmp_path / "shelf" / "box" / "book.txt").write_text("hello")
 
     mcp = create_server()
-    with capture_logs() as logs:
-        await mcp.call_tool(
-            "update_catalog",
-            {"path": str(tmp_path), "process_recursively": True},
-        )
+    await mcp.call_tool(
+        "update_catalog",
+        {"path": str(tmp_path), "process_recursively": True},
+    )
 
-    tool_call_logs = [entry for entry in logs if entry["event"] == "tool_call"]
+    tool_call_logs = _tool_call_events(config.catalog_dir)
     assert len(tool_call_logs) == 1
     entry = tool_call_logs[0]
     assert entry["scanned"] == 1

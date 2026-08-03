@@ -13,6 +13,7 @@ from fastmcp import FastMCP
 from ..catalog import Catalog
 from . import (
     classify_content_role,
+    clear_logs,
     directory_status,
     dtrpg,
     entry_details,
@@ -57,6 +58,7 @@ REGISTRARS: Sequence[Registrar] = (
     resolve_review_flag.register,
     review_items.register,
     entry_details.register,
+    clear_logs.register,
 )
 
 __all__ = [

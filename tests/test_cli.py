@@ -7,7 +7,15 @@ from rpg_librarian_mcp.__main__ import main
 from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.cli import _stats, build_parser
 from rpg_librarian_mcp.db import session_scope
-from rpg_librarian_mcp.model import Entry, Error, IdentificationMethod, Product
+from rpg_librarian_mcp.model import (
+    Entry,
+    Error,
+    FileMetadata,
+    IdentificationMethod,
+    ImageMetadata,
+    PdfMetadata,
+    Product,
+)
 from rpg_librarian_mcp.model.ProcessingStage import ProcessingStage
 
 FAKE_SHA = "a" * 64
@@ -51,12 +59,20 @@ def test_stats_counts_total_with_product_and_with_errors(tmp_path):
                 error_text="boom",
             )
         )
+        with_base_metadata = _make_entry(session, "shelf/box", "tagged.txt")
+        session.add(FileMetadata(entry_id=with_base_metadata.id, title="Tagged"))
+        with_media_metadata = _make_entry(session, "shelf/box", "scan.pdf")
+        session.add(PdfMetadata(entry_id=with_media_metadata.id, page_count=5))
+        with_both_media_types = _make_entry(session, "shelf/box", "photo.jpg")
+        session.add(ImageMetadata(entry_id=with_both_media_types.id, width=10))
         session.commit()
 
     assert _stats(catalog) == {
-        "total_entries": 3,
+        "total_entries": 6,
         "with_product": 1,
         "with_errors": 1,
+        "with_base_metadata": 1,
+        "with_media_metadata": 2,
     }
 
 
@@ -88,7 +104,62 @@ def test_stats_command_prints_json(tmp_path, monkeypatch, capsys):
     main()
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"total_entries": 0, "with_product": 0, "with_errors": 0}
+    assert payload == {
+        "total_entries": 0,
+        "with_product": 0,
+        "with_errors": 0,
+        "with_base_metadata": 0,
+        "with_media_metadata": 0,
+    }
+
+
+def test_dispatch_writes_a_wide_event_to_the_tool_calls_log(
+    tmp_path, monkeypatch, capsys
+):
+    catalog = _catalog(tmp_path)
+    catalog.catalog_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["rpg-librarian-mcp", "stats"])
+
+    main()
+    capsys.readouterr()
+
+    log_path = catalog.catalog_dir / "tool_calls.log"
+    events = [json.loads(line) for line in log_path.read_text().splitlines()]
+    assert len(events) == 1
+    assert events[0]["command"] == "stats"
+    assert events[0]["transport"] == "cli"
+    assert events[0]["outcome"] == "success"
+
+
+def test_clear_logs_deletes_and_reopens_both_log_files(tmp_path, monkeypatch, capsys):
+    catalog = _catalog(tmp_path)
+    catalog.catalog_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["rpg-librarian-mcp", "stats"])
+    main()  # writes a first line to tool_calls.log
+    capsys.readouterr()
+
+    monkeypatch.setattr("sys.argv", ["rpg-librarian-mcp", "clear-logs"])
+    main()
+
+    # `configure_wide_event_logs` opens both files in append mode on every
+    # dispatch, which creates `entry_processing.log` even though `stats`
+    # never writes to it -- so both are already present by the time
+    # `clear-logs` runs.
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "tool_calls_log_cleared": True,
+        "entry_processing_log_cleared": True,
+    }
+    # clear-logs' own dispatch runs after the delete, so the file exists
+    # again with exactly that one fresh line -- not the earlier `stats` line.
+    events = [
+        json.loads(line)
+        for line in (catalog.catalog_dir / "tool_calls.log").read_text().splitlines()
+    ]
+    assert len(events) == 1
+    assert events[0]["command"] == "clear_logs"
 
 
 def test_status_command_reports_library_root(tmp_path, monkeypatch, capsys):

@@ -4,6 +4,7 @@ import isbnlib
 import pytest
 
 from rpg_librarian_mcp.isbn import lookup as isbn_lookup
+from rpg_librarian_mcp.observability import CallTracker
 
 VALID_ISBN = "9780306406157"
 
@@ -122,6 +123,34 @@ def test_lookup_returns_none_when_no_service_has_a_match(
     monkeypatch.setattr(isbnlib, "meta", lambda isbn, service="openl": {})
 
     assert isbn_lookup.lookup(VALID_ISBN) is None
+
+
+def test_lookup_reports_per_provider_call_counts_and_which_one_matched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_meta(isbn: str, service: str = "openl") -> dict:
+        return WIKI_META if service == "wiki" else {}
+
+    monkeypatch.setattr(isbnlib, "meta", fake_meta)
+
+    with CallTracker("lookup_isbn", transport="cli") as tracker:
+        isbn_lookup.lookup(VALID_ISBN)
+
+    assert tracker.event_fields["open_library_calls"] == 1
+    assert tracker.event_fields["wikidata_calls"] == 1
+    assert tracker.event_fields["google_books_calls"] == 0
+    assert tracker.event_fields["isbn_found_via"] == "wiki"
+
+
+def test_lookup_reports_isbn_found_via_none_on_a_total_miss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(isbnlib, "meta", lambda isbn, service="openl": {})
+
+    with CallTracker("lookup_isbn", transport="cli") as tracker:
+        isbn_lookup.lookup(VALID_ISBN)
+
+    assert tracker.event_fields["isbn_found_via"] is None
 
 
 def test_lookup_falls_through_cleanly_on_data_not_found_at_service(

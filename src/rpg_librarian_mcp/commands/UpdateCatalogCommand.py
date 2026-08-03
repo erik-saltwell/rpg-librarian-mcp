@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple, TypedDict
@@ -11,7 +12,14 @@ from ..db import session_scope
 from ..model import Entry, Error
 from ..model.MediaType import MediaType
 from ..model.ProcessingStage import ProcessingStage
-from ..observability import log_event_fields
+from ..observability import (
+    EntryTracker,
+    current_command_name,
+    log_entry_error,
+    log_entry_fields,
+    log_entry_skipped,
+    log_event_fields,
+)
 from ..progress import ProgressReporter
 from ..tools.entry_queries import entries_by_parent, entries_under
 from ..tools.media_type import detect_media_type, detect_mime_type
@@ -124,6 +132,7 @@ class UpdateCatalogCommand:
         total = len(candidates)
         scanned = skipped = successfully_processed = errored = 0
         errors: list[ProcessingError] = []
+        command_name = current_command_name() or type(self).__name__
 
         with session_scope(self.catalog) as session:
             async with reporter.track(total) as update:
@@ -134,6 +143,16 @@ class UpdateCatalogCommand:
                     parent_path = entry_relative_path.parent
                     filename = entry_relative_path.name
 
+                    # Recorded before this file is processed (not just after)
+                    # so a run aborted mid-loop still reports accurate
+                    # partial counts on the command-level event.
+                    log_event_fields(
+                        scanned=scanned,
+                        skipped=skipped,
+                        successfully_processed=successfully_processed,
+                        errored=errored,
+                    )
+
                     if len(parent_path.parts) < 2:
                         # A real Entry can never bind with a parent_path this
                         # shallow (ParentPathType rejects it) -- reject up front
@@ -141,33 +160,66 @@ class UpdateCatalogCommand:
                         # same constraint, rather than letting the query below
                         # raise and abort the whole batch.
                         errored += 1
+                        reason = (
+                            f"{entry_relative_path} is too shallow to "
+                            "be cataloged (need at least a parent and "
+                            "grandparent folder)"
+                        )
                         if len(errors) < self.max_errors:
                             errors.append(
-                                ProcessingError(
-                                    path=entry_relative_path,
-                                    reason=(
-                                        f"{entry_relative_path} is too shallow to "
-                                        "be cataloged (need at least a parent and "
-                                        "grandparent folder)"
-                                    ),
-                                )
+                                ProcessingError(path=entry_relative_path, reason=reason)
                             )
+                        log_entry_error(command_name, None, entry_relative_path, reason)
                     else:
+                        lookup_start = time.perf_counter()
                         existing = session.exec(
                             select(Entry).where(
                                 Entry.parent_path == parent_path,
                                 Entry.filename == filename,
                             )
                         ).first()
+                        existing_lookup_ms = round(
+                            (time.perf_counter() - lookup_start) * 1000, 2
+                        )
 
                         should_process = _should_process_row(file_path, existing, force)
 
                         if not should_process:
+                            # `existing` is never None here -- `not should_process`
+                            # is only reachable when `_should_process_row` found
+                            # an existing row to compare mtimes against -- but
+                            # spelled defensively since that's a fact about the
+                            # other function's body, not visible to the type
+                            # checker here.
                             skipped += 1
+                            log_entry_skipped(
+                                command_name,
+                                existing.id if existing else None,
+                                entry_relative_path,
+                                existing_lookup_ms=existing_lookup_ms,
+                            )
                         else:
+                            # Timed in two separate phases (not just the
+                            # overall `EntryTracker` duration) so a slow run
+                            # can be attributed to file-hashing vs. database
+                            # round trips rather than just "process_one is
+                            # slow" -- the two have very different fixes.
+                            tracker = EntryTracker(
+                                command_name,
+                                existing.id if existing else None,
+                                entry_relative_path,
+                            )
+                            tracker.__enter__()
+                            log_entry_fields(existing_lookup_ms=existing_lookup_ms)
+                            compute_start = time.perf_counter()
                             try:
                                 fields = _compute_entry_fields(file_path)
                             except Exception as exc:
+                                log_entry_fields(
+                                    compute_ms=round(
+                                        (time.perf_counter() - compute_start) * 1000, 2
+                                    )
+                                )
                                 errored += 1
                                 error_target = existing or _create_stub_entry(
                                     session, parent_path, filename
@@ -179,7 +231,20 @@ class UpdateCatalogCommand:
                                     exc,
                                     errors,
                                 )
+                                db_start = time.perf_counter()
+                                session.commit()
+                                log_entry_fields(
+                                    db_write_ms=round(
+                                        (time.perf_counter() - db_start) * 1000, 2
+                                    )
+                                )
+                                tracker.__exit__(type(exc), exc, exc.__traceback__)
                             else:
+                                log_entry_fields(
+                                    compute_ms=round(
+                                        (time.perf_counter() - compute_start) * 1000, 2
+                                    )
+                                )
                                 successfully_processed += 1
                                 if existing is None:
                                     entry = Entry(
@@ -191,11 +256,18 @@ class UpdateCatalogCommand:
                                     for key, value in fields.items():
                                         setattr(existing, key, value)
                                     entry = existing
+
+                                db_start = time.perf_counter()
                                 session.add(entry)
                                 session.flush()
                                 _clear_stale_error(session, entry)
-
-                            session.commit()  # Stage 6 — per file, not batched
+                                session.commit()  # Stage 6 — per file, not batched
+                                log_entry_fields(
+                                    db_write_ms=round(
+                                        (time.perf_counter() - db_start) * 1000, 2
+                                    )
+                                )
+                                tracker.__exit__(None, None, None)
 
                     await update(index + 1, filename, errored)
 

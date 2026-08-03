@@ -42,7 +42,20 @@ from .mcp.ingest_external_source import ingest_external_source
 from .mcp.move import move as move_files
 from .mcp.readonly_query import get_catalog_schema, run_readonly_query
 from .mcp.review_items import list_review_items
-from .model import Entry, Error, IdentificationMethod, ProcessingStage
+from .model import (
+    AudioMetadata,
+    Entry,
+    Error,
+    FileMetadata,
+    IdentificationMethod,
+    ImageMetadata,
+    MeshMetadata,
+    PdfMetadata,
+    ProcessingStage,
+    VideoMetadata,
+)
+from .observability import CallTracker, configure_wide_event_logs
+from .observability import clear_logs as clear_logs_files
 from .progress import CliProgressReporter
 from .rpggeek import RpgGeekClient
 
@@ -80,10 +93,24 @@ def _stats(catalog: Catalog) -> dict[str, int]:
         with_errors = session.exec(
             select(func.count(func.distinct(Error.entry_id)))
         ).one()
+        with_base_metadata = session.exec(
+            select(func.count()).select_from(FileMetadata)
+        ).one()
+        media_metadata_entry_ids = select(PdfMetadata.entry_id).union(
+            select(ImageMetadata.entry_id),
+            select(VideoMetadata.entry_id),
+            select(AudioMetadata.entry_id),
+            select(MeshMetadata.entry_id),
+        )
+        with_media_metadata = session.exec(
+            select(func.count()).select_from(media_metadata_entry_ids.subquery())
+        ).one()
     return {
         "total_entries": total,
         "with_product": with_product,
         "with_errors": with_errors,
+        "with_base_metadata": with_base_metadata,
+        "with_media_metadata": with_media_metadata,
     }
 
 
@@ -100,6 +127,10 @@ def cmd_status(args: argparse.Namespace, catalog: Catalog) -> None:
             "catalog_exists": catalog.catalog_dir.is_dir(),
         }
     )
+
+
+def cmd_clear_logs(args: argparse.Namespace, catalog: Catalog) -> None:
+    _print(clear_logs_files(catalog.catalog_dir))
 
 
 def cmd_update_catalog(args: argparse.Namespace, catalog: Catalog) -> None:
@@ -257,12 +288,23 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     stats = subparsers.add_parser(
-        "stats", help="Total entries, entries with a product, entries with an error."
+        "stats",
+        help=(
+            "Total entries, entries with a product, entries with an error, "
+            "entries with base file metadata, entries with media type "
+            "specific metadata."
+        ),
     )
     stats.set_defaults(func=cmd_stats)
 
     status = subparsers.add_parser("status", help="Server version and library root.")
     status.set_defaults(func=cmd_status)
+
+    clear_logs = subparsers.add_parser(
+        "clear-logs",
+        help="Delete tool_calls.log and entry_processing.log, starting each fresh.",
+    )
+    clear_logs.set_defaults(func=cmd_clear_logs)
 
     update_catalog = subparsers.add_parser(
         "update-catalog", help="Scan a file or directory and update the catalog."
@@ -429,4 +471,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def dispatch(args: argparse.Namespace) -> None:
     catalog = Catalog.from_cwd()
-    args.func(args, catalog)
+    configure_wide_event_logs(catalog.catalog_dir)
+    with CallTracker(args.command, transport="cli"):
+        args.func(args, catalog)

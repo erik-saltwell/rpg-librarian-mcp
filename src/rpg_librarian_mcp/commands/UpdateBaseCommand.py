@@ -10,7 +10,12 @@ from ..catalog import Catalog
 from ..db import session_scope
 from ..model import Entry, Error
 from ..model.ProcessingStage import ProcessingStage
-from ..observability import log_event_fields
+from ..observability import (
+    EntryTracker,
+    current_command_name,
+    log_entry_skipped,
+    log_event_fields,
+)
 from ..progress import ProgressReporter
 from ..tools.entry_queries import entries_by_parent, entries_under, entry_by_exact_path
 from .CommandProtocol import CommandProtocol
@@ -142,6 +147,7 @@ class UpdateBaseCommand(CommandProtocol, ABC):
     ) -> UpdateResult:
         scanned = skipped = succeeded = errored = 0
         errors: list[ProcessingError] = []
+        command_name = current_command_name() or type(self).__name__
 
         with session_scope(self.catalog) as session:
             candidates = self._resolve_entries(
@@ -154,14 +160,30 @@ class UpdateBaseCommand(CommandProtocol, ABC):
                     scanned += 1
                     entry_relative_path = entry.path
 
+                    # Recorded before `process_one` runs (not just after) so
+                    # a fatal exception raised from inside it still leaves
+                    # this entry counted as scanned on the command-level
+                    # event -- otherwise the abort would look like it died on
+                    # the *previous* entry.
+                    log_event_fields(
+                        scanned=scanned,
+                        skipped=skipped,
+                        succeeded=succeeded,
+                        errored=errored,
+                    )
+
                     if not self.in_scope(entry) or (
                         not force and not self.should_process(session, entry)
                     ):
                         skipped += 1
+                        log_entry_skipped(command_name, entry.id, entry_relative_path)
                     else:
                         file_path = self.catalog.to_absolute(entry_relative_path)
                         try:
-                            self.process_one(session, file_path, entry)
+                            with EntryTracker(
+                                command_name, entry.id, entry_relative_path
+                            ):
+                                self.process_one(session, file_path, entry)
                         except self.fatal_exceptions:
                             session.rollback()
                             raise
@@ -177,11 +199,17 @@ class UpdateBaseCommand(CommandProtocol, ABC):
                             self._clear_stale_error(session, entry)
                             session.commit()
 
+                    # Updated every iteration (not just at the end) so a run
+                    # aborted mid-loop by a fatal exception still reports
+                    # accurate partial counts on the command-level event.
+                    log_event_fields(
+                        scanned=scanned,
+                        skipped=skipped,
+                        succeeded=succeeded,
+                        errored=errored,
+                    )
                     await update(index + 1, entry_relative_path.name, errored)
 
-        log_event_fields(
-            scanned=scanned, skipped=skipped, succeeded=succeeded, errored=errored
-        )
         return UpdateResult(
             scanned=scanned,
             skipped=skipped,

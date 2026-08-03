@@ -29,6 +29,8 @@ import isbnlib
 from isbnlib.dev import DataNotFoundAtServiceError, ISBNLibHTTPError
 from isbnlib.dev.webquery import query as _webquery
 
+from ..observability import log_entry_fields, log_event_fields
+
 # Tried in order until one returns a match: Google Books (only if
 # GOOGLE_BOOKS_API_KEY is set -- see _providers()), then Open Library, then
 # Wikipedia/Wikidata as a last resort.
@@ -192,12 +194,23 @@ def _google_books_query(isbn: str, api_key: str) -> IsbnLookupResult | None:
     return result
 
 
-def _providers() -> list[Callable[[str], IsbnLookupResult | None]]:
-    providers: list[Callable[[str], IsbnLookupResult | None]] = []
+_PROVIDER_FIELD_NAMES = {
+    "google_books": "google_books_calls",
+    "openl": "open_library_calls",
+    "wiki": "wikidata_calls",
+}
+
+
+def _providers() -> list[tuple[str, Callable[[str], IsbnLookupResult | None]]]:
+    providers: list[tuple[str, Callable[[str], IsbnLookupResult | None]]] = []
     api_key = os.environ.get("GOOGLE_BOOKS_API_KEY")
     if api_key:
-        providers.append(partial(_google_books_query, api_key=api_key))
-    providers.extend(partial(_query, service=service) for service in _SERVICES)
+        providers.append(
+            ("google_books", partial(_google_books_query, api_key=api_key))
+        )
+    providers.extend(
+        (service, partial(_query, service=service)) for service in _SERVICES
+    )
     return providers
 
 
@@ -217,24 +230,48 @@ def lookup(isbn: str) -> IsbnLookupResult | None:
     falling back to Open Library/Wikidata -- their hit rate alone is low
     enough that the caller should stop rather than grinding through the
     rest of the catalog without Google Books.
+
+    Reports per-provider call counts and which provider (if any) found a
+    match via `log_event_fields`/`log_entry_fields` -- whichever of a
+    command-level or entry-level wide event is currently in flight, or
+    both, or neither (a no-op outside of a tracked call/entry).
     """
+    call_counts = {field_name: 0 for field_name in _PROVIDER_FIELD_NAMES.values()}
     last_error: Exception | None = None
-    for provider in _providers():
+    found_via: str | None = None
+    result: IsbnLookupResult | None = None
+
+    for provider_name, provider in _providers():
+        call_counts[_PROVIDER_FIELD_NAMES[provider_name]] += 1
         try:
             result = provider(isbn)
         except isbnlib.NotValidISBNError:
-            return None
+            result = None
+            break
         except GoogleBooksUnavailableError:
+            _report_lookup_stats(call_counts, found_via=None)
             raise
         except _NO_DATA_ERROR:
+            result = None
             continue
         except Exception as error:
+            result = None
             if _is_not_found_http_error(error):
                 continue
             last_error = error
             continue
         if result is not None:
-            return result
-    if last_error is not None:
+            found_via = provider_name
+            break
+
+    _report_lookup_stats(call_counts, found_via=found_via)
+
+    if found_via is None and last_error is not None:
         raise last_error
-    return None
+    return result if found_via else None
+
+
+def _report_lookup_stats(call_counts: dict[str, int], found_via: str | None) -> None:
+    fields = {**call_counts, "isbn_found_via": found_via}
+    log_event_fields(**fields)
+    log_entry_fields(**fields)

@@ -17,6 +17,7 @@ from typing import Protocol
 from fastmcp import Context
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn
+from rich.table import Column
 
 ProgressUpdate = Callable[[int, str, int], Awaitable[None]]
 
@@ -63,10 +64,18 @@ class CliProgressReporter:
 
     @asynccontextmanager
     async def track(self, total: int) -> AsyncIterator[ProgressUpdate]:
+        # The filename column is last (after the bar) and no_wrap/ellipsis so
+        # that its arbitrary length can't shift the fixed-width columns --
+        # count, error total, bar -- that come before it.
         progress = Progress(
             TextColumn("[progress.description]{task.description}"),
             TextColumn("- {task.completed}/{task.total}"),
+            TextColumn("- {task.fields[errors]} errors"),
             BarColumn(),
+            TextColumn(
+                "{task.fields[filename]}",
+                table_column=Column(no_wrap=True, overflow="ellipsis"),
+            ),
             console=Console(stderr=True),
         )
 
@@ -74,9 +83,12 @@ class CliProgressReporter:
             progress.update(
                 task_id,
                 completed=current,
-                description=f"Processing: {filename} - {errors} errors",
+                filename=filename,
+                errors=errors,
             )
 
         with progress:
-            task_id = progress.add_task("Processing", total=total)
+            task_id = progress.add_task(
+                "Processing", total=total, filename="", errors=0
+            )
             yield update

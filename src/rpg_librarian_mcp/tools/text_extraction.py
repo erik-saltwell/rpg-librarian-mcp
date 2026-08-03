@@ -4,6 +4,7 @@ import json
 
 import fitz
 
+from ..observability import log_entry_fields
 from .ocr import ocr_page_image
 from .pdf_rendering import render_page_image
 
@@ -38,16 +39,28 @@ def extract_page_texts(doc: fitz.Document, pages: set[int]) -> dict[int, str]:
     """0-indexed page number -> extracted text, for each page in `pages`.
 
     Direct text extraction is used where the page has a real text layer;
-    otherwise the page is OCR'd.
+    otherwise the page is OCR'd. Reports how many pages were sampled and
+    the direct-extraction/OCR split via `log_entry_fields` -- a no-op
+    outside of a tracked entry.
     """
     page_texts: dict[int, str] = {}
+    direct_pages = 0
+    ocr_pages = 0
     for page_number in sorted(pages):
         page = doc[page_number]
         if _has_extractable_text(page):
             text = str(page.get_text("text"))
+            direct_pages += 1
         else:
             text = ocr_page_image(render_page_image(page))
+            ocr_pages += 1
         page_texts[page_number] = text.strip()
+
+    log_entry_fields(
+        pages_sampled=len(pages),
+        pages_direct_extraction=direct_pages,
+        pages_ocr=ocr_pages,
+    )
     return page_texts
 
 
