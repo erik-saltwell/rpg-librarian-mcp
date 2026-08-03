@@ -1,12 +1,11 @@
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
-from conftest import insert_raw_entry
+from conftest import FakeProgressReporter, insert_raw_entry
 from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.commands.FlagForReviewCommand import FlagForReviewCommand
 from rpg_librarian_mcp.commands.ResolveReviewFlagCommand import (
@@ -79,7 +78,7 @@ async def test_flag_for_review_creates_an_open_flag(tmp_path):
     entry = _entry(catalog, "book.pdf")
 
     command = FlagForReviewCommand(catalog, reason="unsure which edition")
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.succeeded == 1
     with session_scope(catalog) as session:
@@ -95,10 +94,10 @@ async def test_flag_for_review_updates_reason_instead_of_duplicating(tmp_path):
     _entry(catalog, "book.pdf")
 
     await FlagForReviewCommand(catalog, reason="first guess").process(
-        tmp_path, True, False, AsyncMock()
+        tmp_path, True, False, FakeProgressReporter()
     )
     await FlagForReviewCommand(catalog, reason="second guess").process(
-        tmp_path, True, False, AsyncMock()
+        tmp_path, True, False, FakeProgressReporter()
     )
 
     with session_scope(catalog) as session:
@@ -113,7 +112,7 @@ async def test_flag_for_review_flags_every_entry_under_a_directory(tmp_path):
     _entry(catalog, "handout.pdf", sha256="b" * 64)
 
     command = FlagForReviewCommand(catalog, reason="whole product unclear")
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.succeeded == 2
     with session_scope(catalog) as session:
@@ -124,12 +123,12 @@ async def test_resolve_review_flag_closes_an_open_flag(tmp_path):
     catalog = _catalog(tmp_path)
     entry = _entry(catalog, "book.pdf")
     await FlagForReviewCommand(catalog, reason="unsure").process(
-        tmp_path, True, False, AsyncMock()
+        tmp_path, True, False, FakeProgressReporter()
     )
 
     result = await ResolveReviewFlagCommand(
         catalog, resolution_note="user confirmed it's the 2019 edition"
-    ).process(tmp_path, True, False, AsyncMock())
+    ).process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.succeeded == 1
     with session_scope(catalog) as session:
@@ -145,7 +144,7 @@ async def test_resolve_review_flag_skips_entries_with_no_open_flag(tmp_path):
     _entry(catalog, "book.pdf")
 
     result = await ResolveReviewFlagCommand(catalog, resolution_note="n/a").process(
-        tmp_path, True, False, AsyncMock()
+        tmp_path, True, False, FakeProgressReporter()
     )
 
     assert result.skipped == 1
@@ -159,14 +158,14 @@ async def test_resolved_flags_can_be_reopened(tmp_path):
     catalog = _catalog(tmp_path)
     _entry(catalog, "book.pdf")
     await FlagForReviewCommand(catalog, reason="first pass").process(
-        tmp_path, True, False, AsyncMock()
+        tmp_path, True, False, FakeProgressReporter()
     )
     await ResolveReviewFlagCommand(catalog, resolution_note="handled").process(
-        tmp_path, True, False, AsyncMock()
+        tmp_path, True, False, FakeProgressReporter()
     )
 
     result = await FlagForReviewCommand(catalog, reason="second pass").process(
-        tmp_path, True, False, AsyncMock()
+        tmp_path, True, False, FakeProgressReporter()
     )
 
     assert result.succeeded == 1
@@ -183,13 +182,13 @@ async def test_list_review_items_only_returns_open_flags(tmp_path):
     _entry(catalog, "book.pdf", sha256="a" * 64, write_real_file=True)
     _entry(catalog, "handout.pdf", sha256="b" * 64, write_real_file=True)
     await FlagForReviewCommand(catalog, reason="open one").process(
-        tmp_path / "shelf" / "box" / "book.pdf", False, False, AsyncMock()
+        tmp_path / "shelf" / "box" / "book.pdf", False, False, FakeProgressReporter()
     )
     await FlagForReviewCommand(catalog, reason="will be resolved").process(
-        tmp_path / "shelf" / "box" / "handout.pdf", False, False, AsyncMock()
+        tmp_path / "shelf" / "box" / "handout.pdf", False, False, FakeProgressReporter()
     )
     await ResolveReviewFlagCommand(catalog, resolution_note="done").process(
-        tmp_path / "shelf" / "box" / "handout.pdf", False, False, AsyncMock()
+        tmp_path / "shelf" / "box" / "handout.pdf", False, False, FakeProgressReporter()
     )
 
     result = list_review_items(catalog)

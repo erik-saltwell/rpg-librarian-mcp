@@ -5,20 +5,253 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "--test",
+            "name": "MCP server",
             "type": "debugpy",
             "request": "launch",
-            "module": "{{ cookiecutter.package_name }}",
+            "module": "rpg_librarian_mcp",
             "console": "integratedTerminal",
-            "args": "test"
+            "cwd": "${env:HOME}/data/rpg"
+        },
+        {
+            "name": "--migrate",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["--migrate"]
         },
         {
             "name": "custom args",
             "type": "debugpy",
             "request": "launch",
-            "module": "{{ cookiecutter.package_name }}",
+            "module": "rpg_librarian_mcp",
             "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
             "args": "${command:pickArgs}"
+        },
+        {
+            "name": "cli: stats",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["stats"]
+        },
+        {
+            "name": "cli: status",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["status"]
+        },
+        {
+            "name": "cli: update-catalog",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["update-catalog", "${input:path}", "-r"]
+        },
+        {
+            "name": "cli: update-metadata",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["update-metadata", "${input:path}", "-r"]
+        },
+        {
+            "name": "cli: read-pdfs",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["read-pdfs", "${input:path}", "-r"]
+        },
+        {
+            "name": "cli: classify-content-role",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["classify-content-role", "${input:path}", "-r"]
+        },
+        {
+            "name": "cli: remove",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["remove", "${input:path}"]
+        },
+        {
+            "name": "cli: flag-for-review",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["flag-for-review", "${input:path}", "--reason", "${input:reason}"]
+        },
+        {
+            "name": "cli: resolve-review-flag",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["resolve-review-flag", "${input:path}", "--note", "${input:note}"]
+        },
+        {
+            "name": "cli: update-product",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": [
+                "update-product",
+                "${input:path}",
+                "--title",
+                "${input:title}",
+                "--identification-method",
+                "${input:identificationMethod}"
+            ]
+        },
+        {
+            "name": "cli: list-entries",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["list-entries", "${input:path}"]
+        },
+        {
+            "name": "cli: summarize-directories",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["summarize-directories", "${input:path}"]
+        },
+        {
+            "name": "cli: list-errors",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["list-errors"]
+        },
+        {
+            "name": "cli: list-review-items",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["list-review-items"]
+        },
+        {
+            "name": "cli: find-duplicates",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["find-duplicates"]
+        },
+        {
+            "name": "cli: entry-details",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["entry-details", "${input:path}"]
+        },
+        {
+            "name": "cli: move",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["move", "${input:path}", "${input:destinationPath}"]
+        },
+        {
+            "name": "cli: query",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["query", "${input:sql}"]
+        },
+        {
+            "name": "cli: schema",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["schema"]
+        },
+        {
+            "name": "cli: ingest-external-source",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["ingest-external-source", "${input:sourcePath}", "${input:name}"]
+        },
+        {
+            "name": "cli: lookup-isbn",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["lookup-isbn", "${input:isbn}"]
+        },
+        {
+            "name": "cli: search-rpg-geek",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["search-rpg-geek", "--name", "${input:queryText}"]
+        },
+        {
+            "name": "cli: lookup-rpg-geek-product",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["lookup-rpg-geek-product", "${input:rpggeekId}"]
+        },
+        {
+            "name": "cli: search-dtrpg",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["search-dtrpg", "${input:queryText}"]
         },
         {
             "name": "Integration Tests",
@@ -31,6 +264,79 @@
                 "tests/integration"
             ],
             "console": "integratedTerminal"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "path",
+            "type": "promptString",
+            "description": "Absolute path (file or directory) under ~/data/rpg",
+            "default": "${env:HOME}/data/rpg"
+        },
+        {
+            "id": "destinationPath",
+            "type": "promptString",
+            "description": "Absolute destination path for move"
+        },
+        {
+            "id": "sourcePath",
+            "type": "promptString",
+            "description": "Absolute path outside the library, to ingest from"
+        },
+        {
+            "id": "name",
+            "type": "promptString",
+            "description": "Name for the _inbox/<name>/ staging folder"
+        },
+        {
+            "id": "reason",
+            "type": "promptString",
+            "description": "Review-flag reason"
+        },
+        {
+            "id": "note",
+            "type": "promptString",
+            "description": "Review-flag resolution note"
+        },
+        {
+            "id": "title",
+            "type": "promptString",
+            "description": "Product title"
+        },
+        {
+            "id": "identificationMethod",
+            "type": "pickString",
+            "description": "How the product was identified",
+            "options": [
+                "isbn_match",
+                "rpggeek_match",
+                "drivethru_match",
+                "filename_heuristic",
+                "llm_judgment",
+                "manual"
+            ],
+            "default": "manual"
+        },
+        {
+            "id": "sql",
+            "type": "promptString",
+            "description": "Read-only SQL statement",
+            "default": "select count(*) from entry"
+        },
+        {
+            "id": "isbn",
+            "type": "promptString",
+            "description": "ISBN to look up"
+        },
+        {
+            "id": "queryText",
+            "type": "promptString",
+            "description": "Search text (product name)"
+        },
+        {
+            "id": "rpggeekId",
+            "type": "promptString",
+            "description": "Numeric RPGGeek item id"
         }
     ]
 }

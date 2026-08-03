@@ -1,10 +1,10 @@
 import importlib
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock
 
 import pytest
 
+from conftest import FakeProgressReporter
 from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.commands.UpdateCatalogCommand import UpdateCatalogCommand
 from rpg_librarian_mcp.db import session_scope
@@ -130,7 +130,7 @@ async def test_list_errors_surfaces_a_permission_failure_on_a_brand_new_file(
         lambda path: (_ for _ in ()).throw(PermissionError("denied")),
     )
 
-    await command.process(shelf, False, False, AsyncMock())
+    await command.process(shelf, False, False, FakeProgressReporter())
 
     result = list_errors(catalog)
 

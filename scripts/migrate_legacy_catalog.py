@@ -58,13 +58,13 @@ import shutil
 import sys
 import time
 import uuid
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import cast
 
 import fitz
 import litellm
-from fastmcp import Context
 from sqlmodel import col, select
 
 from rpg_librarian_mcp.catalog import Catalog, load_env
@@ -80,6 +80,7 @@ from rpg_librarian_mcp.model import (
     PdfContents,
     ProcessingStage,
 )
+from rpg_librarian_mcp.progress import ProgressUpdate
 from rpg_librarian_mcp.tools.barcode import find_isbn_or_issn_barcode
 from rpg_librarian_mcp.tools.text_extraction import barcode_sample_pages
 
@@ -207,32 +208,27 @@ def _fragment_sample_text(fragment: dict) -> tuple[str, str]:
 # --------------------------------------------------------------------------
 
 
-class _ScanProgressContext:
-    """Duck-types just enough of fastmcp's Context for UpdateCatalogCommand:
-    it only ever awaits `report_progress(current, total, message)`."""
+class _ScanProgressReporter:
+    """Render scan progress using this script's lightweight status bar."""
 
-    def __init__(self) -> None:
-        self._bar: ProgressBar | None = None
+    @asynccontextmanager
+    async def track(self, total: int) -> AsyncIterator[ProgressUpdate]:
+        bar = ProgressBar(total, "scan")
 
-    async def report_progress(
-        self, current: int, total: int, message: str | None = None
-    ) -> None:
-        if self._bar is None:
-            self._bar = ProgressBar(total, "scan")
-        self._bar.total = total
-        self._bar.set(current)
-        if current >= total and self._bar is not None:
-            self._bar.close()
-            self._bar = None
+        async def update(current: int, filename: str, errors: int) -> None:
+            bar.set(current)
+
+        try:
+            yield update
+        finally:
+            bar.close()
 
 
 def run_scan(catalog: Catalog) -> None:
     log.info("Scanning %s ...", catalog.library_root)
     command = UpdateCatalogCommand(catalog)
     result = asyncio.run(
-        command.process(
-            catalog.library_root, True, False, cast(Context, _ScanProgressContext())
-        )
+        command.process(catalog.library_root, True, False, _ScanProgressReporter())
     )
     log.info(
         "Scan complete: scanned=%d processed=%d skipped=%d removed=%d errored=%d",

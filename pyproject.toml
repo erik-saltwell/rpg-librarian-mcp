@@ -22,6 +22,7 @@ dependencies = [
     "python-magic>=0.4.27",
     "pyyaml>=6.0",
     "requests>=2.32",
+    "rich>=13.9",
     "setuptools>=80.0,<82",  # isbnlib.registry does `from pkg_resources import ...`, removed in setuptools 82
     "sqlmodel>=0.0.39",
     "structlog>=26.1.0",

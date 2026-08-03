@@ -3,12 +3,12 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from fastmcp import Context
 from sqlmodel import Session, func, select
 
 from ..catalog import Catalog
 from ..db import session_scope
 from ..model import Entry, IdentificationMethod, ProcessingStage, Product
+from ..progress import ProgressReporter
 from .UpdateBaseCommand import UpdateBaseCommand, UpdateResult
 
 
@@ -41,7 +41,7 @@ class UpdateProductCommand(UpdateBaseCommand):
         process_recursively: bool,
         title: str,
         identification_method: IdentificationMethod,
-        ctx: Context,
+        reporter: ProgressReporter,
         description: str | None = None,
         artists: str | None = None,
         publisher: str | None = None,
@@ -68,7 +68,7 @@ class UpdateProductCommand(UpdateBaseCommand):
             )
             self._resolved_product_id = product.id
 
-        result = await self.process(path, process_recursively, False, ctx)
+        result = await self.process(path, process_recursively, False, reporter)
         return result, self._resolved_product_id, created
 
     def _find_or_create_product(

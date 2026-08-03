@@ -6,6 +6,7 @@ from fastmcp import Context, FastMCP
 
 from ..catalog import Catalog
 from ..commands.UpdateCatalogCommand import UpdateCatalogCommand
+from ..progress import McpProgressReporter
 
 
 def register(mcp: FastMCP, catalog: Catalog) -> None:
@@ -25,5 +26,7 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
         `process_recursively` is set. `force` bypasses the "skip if
         unchanged" check and reprocesses every matched file.
         """
-        result = await command.process(path, process_recursively, force, ctx)
+        result = await command.process(
+            path, process_recursively, force, McpProgressReporter(ctx)
+        )
         return {**result._asdict(), "errors": [e._asdict() for e in result.errors]}

@@ -8,6 +8,7 @@ from fastmcp import Context, FastMCP
 
 from ..catalog import Catalog
 from ..commands.ClassifyContentRoleCommand import ClassifyContentRoleCommand
+from ..progress import McpProgressReporter
 
 
 def register(mcp: FastMCP, catalog: Catalog) -> None:
@@ -36,5 +37,7 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
         settings_and_supplements, gm_and_player_aids, extras.
         """
         command = ClassifyContentRoleCommand(catalog)
-        result = await command.process(path, process_recursively, force, ctx)
+        result = await command.process(
+            path, process_recursively, force, McpProgressReporter(ctx)
+        )
         return {**result._asdict(), "errors": [e._asdict() for e in result.errors]}

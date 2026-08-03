@@ -1,9 +1,9 @@
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 from sqlmodel import select
 
+from conftest import FakeProgressReporter
 from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.commands.UpdateCatalogCommand import UpdateCatalogCommand
 from rpg_librarian_mcp.commands.UpdateProductCommand import UpdateProductCommand
@@ -21,7 +21,9 @@ async def _catalog_file(tmp_path: Path, parent: str, filename: str, text: str) -
     file_path = shelf / filename
     file_path.write_text(text)
     catalog = _catalog(tmp_path)
-    await UpdateCatalogCommand(catalog).process(tmp_path, True, False, AsyncMock())
+    await UpdateCatalogCommand(catalog).process(
+        tmp_path, True, False, FakeProgressReporter()
+    )
     return file_path
 
 
@@ -36,7 +38,11 @@ async def test_creates_a_new_product_and_links_a_single_file(tmp_path):
     command = UpdateProductCommand(catalog)
 
     result, product_id, created = await command.run(
-        file_path, False, "Call of Cthulhu", IdentificationMethod.manual, AsyncMock()
+        file_path,
+        False,
+        "Call of Cthulhu",
+        IdentificationMethod.manual,
+        FakeProgressReporter(),
     )
 
     assert created is True
@@ -60,7 +66,7 @@ async def test_rejects_an_empty_title(tmp_path):
 
     with pytest.raises(ValueError, match="title"):
         await command.run(
-            file_path, False, "", IdentificationMethod.manual, AsyncMock()
+            file_path, False, "", IdentificationMethod.manual, FakeProgressReporter()
         )
 
     with session_scope(catalog) as session:
@@ -87,7 +93,7 @@ async def test_reuses_an_existing_case_insensitive_match(tmp_path):
         False,
         "call of cthulhu",
         IdentificationMethod.isbn_match,
-        AsyncMock(),
+        FakeProgressReporter(),
         system="coc 7e",
     )
 
@@ -127,7 +133,7 @@ async def test_raises_when_multiple_products_match(tmp_path):
             False,
             "Call of Cthulhu",
             IdentificationMethod.manual,
-            AsyncMock(),
+            FakeProgressReporter(),
         )
 
 
@@ -143,7 +149,7 @@ async def test_raises_when_path_has_no_cataloged_entries(tmp_path):
             False,
             "Call of Cthulhu",
             IdentificationMethod.manual,
-            AsyncMock(),
+            FakeProgressReporter(),
         )
 
 
@@ -165,7 +171,11 @@ async def test_overwrites_an_entrys_existing_different_product(tmp_path):
 
     command = UpdateProductCommand(catalog)
     result, product_id, created = await command.run(
-        file_path, False, "Call of Cthulhu", IdentificationMethod.manual, AsyncMock()
+        file_path,
+        False,
+        "Call of Cthulhu",
+        IdentificationMethod.manual,
+        FakeProgressReporter(),
     )
 
     assert created is True
@@ -186,7 +196,7 @@ async def test_recursive_links_every_entry_under_a_directory(tmp_path):
         True,
         "Call of Cthulhu",
         IdentificationMethod.manual,
-        AsyncMock(),
+        FakeProgressReporter(),
     )
 
     assert result.succeeded == 2
@@ -199,12 +209,20 @@ async def test_second_call_skips_entries_already_linked_to_the_same_product(tmp_
     catalog = _catalog(tmp_path)
     command = UpdateProductCommand(catalog)
     await command.run(
-        file_path, False, "Call of Cthulhu", IdentificationMethod.manual, AsyncMock()
+        file_path,
+        False,
+        "Call of Cthulhu",
+        IdentificationMethod.manual,
+        FakeProgressReporter(),
     )
 
     second_command = UpdateProductCommand(catalog)
     result, _product_id, created = await second_command.run(
-        file_path, False, "Call of Cthulhu", IdentificationMethod.manual, AsyncMock()
+        file_path,
+        False,
+        "Call of Cthulhu",
+        IdentificationMethod.manual,
+        FakeProgressReporter(),
     )
 
     assert created is False

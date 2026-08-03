@@ -1,8 +1,8 @@
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 from sqlmodel import select
 
+from conftest import FakeProgressReporter
 from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.commands.UpdateCatalogCommand import UpdateCatalogCommand
 from rpg_librarian_mcp.commands.UpdateMetadataCommand import UpdateMetadataCommand
@@ -26,7 +26,9 @@ async def _catalog_file(tmp_path: Path, parent: str, filename: str, text: str) -
     file_path = shelf / filename
     file_path.write_text(text)
     catalog = _catalog(tmp_path)
-    await UpdateCatalogCommand(catalog).process(tmp_path, True, False, AsyncMock())
+    await UpdateCatalogCommand(catalog).process(
+        tmp_path, True, False, FakeProgressReporter()
+    )
     return file_path
 
 
@@ -58,7 +60,7 @@ async def test_process_one_persists_generic_and_type_specific_metadata(
     )
     command = UpdateMetadataCommand(catalog, ProcessingStage.extract_metadata)
 
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.succeeded == 1
     assert result.errored == 0
@@ -84,7 +86,7 @@ async def test_process_one_skips_the_type_specific_table_when_none(tmp_path):
     entry = _get_entry(catalog, "book.txt")
     command = UpdateMetadataCommand(catalog, ProcessingStage.extract_metadata)
 
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.succeeded == 1
     with session_scope(catalog) as session:
@@ -111,7 +113,7 @@ async def test_should_process_is_false_once_file_metadata_exists_with_no_error(
     catalog = _catalog(tmp_path)
     entry = _get_entry(catalog, "book.txt")
     command = UpdateMetadataCommand(catalog, ProcessingStage.extract_metadata)
-    await command.process(tmp_path, True, False, AsyncMock())
+    await command.process(tmp_path, True, False, FakeProgressReporter())
 
     with session_scope(catalog) as session:
         assert command.should_process(session, entry) is False
@@ -122,7 +124,7 @@ async def test_should_process_is_true_again_when_an_error_row_exists(tmp_path):
     catalog = _catalog(tmp_path)
     entry = _get_entry(catalog, "book.txt")
     command = UpdateMetadataCommand(catalog, ProcessingStage.extract_metadata)
-    await command.process(tmp_path, True, False, AsyncMock())
+    await command.process(tmp_path, True, False, FakeProgressReporter())
     with session_scope(catalog) as session:
         session.add(
             Error(
@@ -146,10 +148,12 @@ async def test_corrupted_pdf_is_recorded_as_an_error_not_a_silent_success(tmp_pa
     shelf.mkdir(parents=True)
     (shelf / "garbage.pdf").write_text("%PDF-1.4\nnot a real pdf body\n%%EOF")
     catalog = _catalog(tmp_path)
-    await UpdateCatalogCommand(catalog).process(tmp_path, True, False, AsyncMock())
+    await UpdateCatalogCommand(catalog).process(
+        tmp_path, True, False, FakeProgressReporter()
+    )
     command = UpdateMetadataCommand(catalog, ProcessingStage.extract_metadata)
 
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.succeeded == 0
     assert result.errored == 1
@@ -176,10 +180,12 @@ async def test_lys_mesh_file_is_not_errored(tmp_path):
     with zipfile.ZipFile(shelf / "model.lys", "w") as zf:
         zf.writestr("not_a_real_model", "placeholder")
     catalog = _catalog(tmp_path)
-    await UpdateCatalogCommand(catalog).process(tmp_path, True, False, AsyncMock())
+    await UpdateCatalogCommand(catalog).process(
+        tmp_path, True, False, FakeProgressReporter()
+    )
     command = UpdateMetadataCommand(catalog, ProcessingStage.extract_metadata)
 
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.errored == 0
     assert result.succeeded == 1
@@ -199,7 +205,7 @@ async def test_extractor_failure_is_recorded_as_an_error(tmp_path, monkeypatch):
     )
     command = UpdateMetadataCommand(catalog, ProcessingStage.extract_metadata)
 
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.errored == 1
     assert result.errors[0].reason == "unreadable file"

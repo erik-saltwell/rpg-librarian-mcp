@@ -8,6 +8,7 @@ from fastmcp import Context, FastMCP
 
 from ..catalog import Catalog
 from ..commands.FlagForReviewCommand import FlagForReviewCommand
+from ..progress import McpProgressReporter
 
 
 def register(mcp: FastMCP, catalog: Catalog) -> None:
@@ -36,5 +37,7 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
         with `resolve_review_flag` once the user has said how to handle it.
         """
         command = FlagForReviewCommand(catalog, reason)
-        result = await command.process(path, process_recursively, False, ctx)
+        result = await command.process(
+            path, process_recursively, False, McpProgressReporter(ctx)
+        )
         return {**result._asdict(), "errors": [e._asdict() for e in result.errors]}

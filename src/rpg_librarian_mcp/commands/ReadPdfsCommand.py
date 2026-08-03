@@ -5,13 +5,13 @@ from typing import ClassVar
 
 import fitz
 import litellm
-from fastmcp import Context
 from sqlmodel import Session
 
 from ..isbn import isbn, issn
 from ..llm.pdf_judgment import judge_pdf_contents
 from ..metadata.extractors.pdf_extractor import PdfExtractor
 from ..model import Entry, Error, MediaType, PdfContents
+from ..progress import ProgressReporter
 from ..tools.barcode import find_isbn_or_issn_barcode
 from ..tools.ocr import check_tesseract_available
 from ..tools.text_extraction import (
@@ -34,7 +34,7 @@ class ReadPdfsCommand(UpdateBaseCommand):
         starting_path: Path,
         process_recursively: bool,
         force: bool,
-        ctx: Context,
+        reporter: ProgressReporter,
     ) -> UpdateResult:
         """Same as the base `process`, plus a one-time Tesseract check.
 
@@ -43,7 +43,9 @@ class ReadPdfsCommand(UpdateBaseCommand):
         erroring every scanned PDF individually.
         """
         check_tesseract_available()
-        return await super().process(starting_path, process_recursively, force, ctx)
+        return await super().process(
+            starting_path, process_recursively, force, reporter
+        )
 
     def in_scope(self, entry: Entry) -> bool:
         """Non-PDF entries are never processed, force or not."""

@@ -9,6 +9,7 @@ from fastmcp import Context, FastMCP
 from ..catalog import Catalog
 from ..commands.ReadPdfsCommand import ReadPdfsCommand
 from ..model import ProcessingStage
+from ..progress import McpProgressReporter
 
 
 def register(mcp: FastMCP, catalog: Catalog) -> None:
@@ -30,5 +31,7 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
         errored. `force` bypasses the "skip if unchanged" check and
         reprocesses every matched PDF.
         """
-        result = await command.process(path, process_recursively, force, ctx)
+        result = await command.process(
+            path, process_recursively, force, McpProgressReporter(ctx)
+        )
         return {**result._asdict(), "errors": [e._asdict() for e in result.errors]}

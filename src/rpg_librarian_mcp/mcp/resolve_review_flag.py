@@ -8,6 +8,7 @@ from fastmcp import Context, FastMCP
 
 from ..catalog import Catalog
 from ..commands.ResolveReviewFlagCommand import ResolveReviewFlagCommand
+from ..progress import McpProgressReporter
 
 
 def register(mcp: FastMCP, catalog: Catalog) -> None:
@@ -30,5 +31,7 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
         instruction was to leave it alone, this is the only call needed.
         """
         command = ResolveReviewFlagCommand(catalog, resolution_note)
-        result = await command.process(path, process_recursively, False, ctx)
+        result = await command.process(
+            path, process_recursively, False, McpProgressReporter(ctx)
+        )
         return {**result._asdict(), "errors": [e._asdict() for e in result.errors]}

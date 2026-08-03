@@ -1,10 +1,9 @@
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 from sqlmodel import select
 
-from conftest import insert_raw_entry
+from conftest import FakeProgressReporter, insert_raw_entry
 from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.commands.RemoveCommand import RemoveCommand
 from rpg_librarian_mcp.commands.UpdateCatalogCommand import UpdateCatalogCommand
@@ -22,7 +21,9 @@ async def _catalog_file(tmp_path: Path, parent: str, filename: str, text: str) -
     file_path = shelf / filename
     file_path.write_text(text)
     catalog = _catalog(tmp_path)
-    await UpdateCatalogCommand(catalog).process(tmp_path, True, False, AsyncMock())
+    await UpdateCatalogCommand(catalog).process(
+        tmp_path, True, False, FakeProgressReporter()
+    )
     return file_path
 
 
@@ -41,7 +42,7 @@ async def test_removes_a_single_file_moving_it_to_trash_and_dropping_the_entry(
     catalog = _catalog(tmp_path)
     command = RemoveCommand(catalog)
 
-    result = await command.process(file_path, False, False, AsyncMock())
+    result = await command.process(file_path, False, False, FakeProgressReporter())
 
     assert result.succeeded == 1
     assert not file_path.exists()
@@ -57,7 +58,9 @@ async def test_removes_every_entry_recursively_under_a_directory(tmp_path):
     catalog = _catalog(tmp_path)
     command = RemoveCommand(catalog)
 
-    result = await command.process(tmp_path / "shelf" / "box", True, False, AsyncMock())
+    result = await command.process(
+        tmp_path / "shelf" / "box", True, False, FakeProgressReporter()
+    )
 
     assert result.succeeded == 2
     assert (catalog.catalog_dir / "trash" / "shelf" / "box" / "one.pdf").exists()
@@ -78,7 +81,9 @@ async def test_recursive_removal_prunes_emptied_directories(tmp_path):
     catalog = _catalog(tmp_path)
     command = RemoveCommand(catalog)
 
-    await command.process(tmp_path / "shelf" / "box", True, False, AsyncMock())
+    await command.process(
+        tmp_path / "shelf" / "box", True, False, FakeProgressReporter()
+    )
 
     assert not (tmp_path / "shelf" / "box").exists()
     assert (tmp_path / "shelf").exists()
@@ -93,7 +98,9 @@ async def test_pruning_does_not_touch_an_unrelated_empty_sibling_directory(tmp_p
     catalog = _catalog(tmp_path)
     command = RemoveCommand(catalog)
 
-    await command.process(tmp_path / "shelf" / "box", True, False, AsyncMock())
+    await command.process(
+        tmp_path / "shelf" / "box", True, False, FakeProgressReporter()
+    )
 
     assert not (tmp_path / "shelf" / "box").exists()
     assert (tmp_path / "shelf" / "untouched-empty").exists()
@@ -106,7 +113,7 @@ async def test_non_recursive_leaves_files_in_subdirectories_untouched(tmp_path):
     command = RemoveCommand(catalog)
 
     result = await command.process(
-        tmp_path / "shelf" / "box", False, False, AsyncMock()
+        tmp_path / "shelf" / "box", False, False, FakeProgressReporter()
     )
 
     assert result.succeeded == 1
@@ -128,7 +135,7 @@ async def test_rejects_a_trash_collision_and_leaves_the_file_and_entry_in_place(
     trash_path.write_text("already trashed content")
     command = RemoveCommand(catalog)
 
-    result = await command.process(file_path, False, False, AsyncMock())
+    result = await command.process(file_path, False, False, FakeProgressReporter())
 
     assert result.errored == 1
     assert result.succeeded == 0
@@ -180,7 +187,7 @@ async def test_second_run_on_the_same_file_path_errors_since_nothing_is_left_the
     file_path = await _catalog_file(tmp_path, "shelf/box", "book.pdf", "hello")
     catalog = _catalog(tmp_path)
     command = RemoveCommand(catalog)
-    await command.process(file_path, False, False, AsyncMock())
+    await command.process(file_path, False, False, FakeProgressReporter())
 
     with pytest.raises(ValueError, match="does not exist"):
-        await command.process(file_path, False, False, AsyncMock())
+        await command.process(file_path, False, False, FakeProgressReporter())

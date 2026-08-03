@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import ClassVar, NamedTuple
 
-from fastmcp import Context
 from sqlmodel import Session
 
 from ..catalog import Catalog
@@ -12,6 +11,7 @@ from ..db import session_scope
 from ..model import Entry, Error
 from ..model.ProcessingStage import ProcessingStage
 from ..observability import log_event_fields
+from ..progress import ProgressReporter
 from ..tools.entry_queries import entries_by_parent, entries_under, entry_by_exact_path
 from .CommandProtocol import CommandProtocol
 from .ProcessingError import ProcessingError
@@ -138,11 +138,10 @@ class UpdateBaseCommand(CommandProtocol, ABC):
         starting_path: Path,
         process_recursively: bool,
         force: bool,
-        ctx: Context,
+        reporter: ProgressReporter,
     ) -> UpdateResult:
         scanned = skipped = succeeded = errored = 0
         errors: list[ProcessingError] = []
-        last_reported_percent = -1
 
         with session_scope(self.catalog) as session:
             candidates = self._resolve_entries(
@@ -150,39 +149,35 @@ class UpdateBaseCommand(CommandProtocol, ABC):
             )
             total = len(candidates)
 
-            for index, entry in enumerate(candidates):
-                scanned += 1
-                entry_relative_path = entry.path
+            async with reporter.track(total) as update:
+                for index, entry in enumerate(candidates):
+                    scanned += 1
+                    entry_relative_path = entry.path
 
-                if not self.in_scope(entry) or (
-                    not force and not self.should_process(session, entry)
-                ):
-                    skipped += 1
-                else:
-                    file_path = self.catalog.to_absolute(entry_relative_path)
-                    try:
-                        self.process_one(session, file_path, entry)
-                    except self.fatal_exceptions:
-                        session.rollback()
-                        raise
-                    except Exception as exc:
-                        session.rollback()
-                        errored += 1
-                        self._record_error(
-                            session, entry, entry_relative_path, exc, errors
-                        )
-                        session.commit()
+                    if not self.in_scope(entry) or (
+                        not force and not self.should_process(session, entry)
+                    ):
+                        skipped += 1
                     else:
-                        succeeded += 1
-                        self._clear_stale_error(session, entry)
-                        session.commit()
+                        file_path = self.catalog.to_absolute(entry_relative_path)
+                        try:
+                            self.process_one(session, file_path, entry)
+                        except self.fatal_exceptions:
+                            session.rollback()
+                            raise
+                        except Exception as exc:
+                            session.rollback()
+                            errored += 1
+                            self._record_error(
+                                session, entry, entry_relative_path, exc, errors
+                            )
+                            session.commit()
+                        else:
+                            succeeded += 1
+                            self._clear_stale_error(session, entry)
+                            session.commit()
 
-                percent = (index + 1) * 100 // total if total else 100
-                if percent != last_reported_percent:
-                    await ctx.report_progress(
-                        index + 1, total, f"Scanned {index + 1}/{total}"
-                    )
-                last_reported_percent = percent
+                    await update(index + 1, entry_relative_path.name, errored)
 
         log_event_fields(
             scanned=scanned, skipped=skipped, succeeded=succeeded, errored=errored

@@ -1,9 +1,8 @@
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 from sqlmodel import select
 
-from conftest import insert_raw_entry
+from conftest import FakeProgressReporter, insert_raw_entry
 from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.commands import ClassifyContentRoleCommand as command_module
 from rpg_librarian_mcp.commands.ClassifyContentRoleCommand import (
@@ -179,7 +178,7 @@ async def test_process_writes_content_role_from_description(tmp_path, monkeypatc
     _stub_judgment(monkeypatch, ContentRole.core_rules)
 
     command = ClassifyContentRoleCommand(catalog)
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.succeeded == 1
     with session_scope(catalog) as session:
@@ -205,7 +204,7 @@ async def test_process_classifies_once_per_product_not_per_entry(tmp_path, monke
     monkeypatch.setattr(command_module, "judge_content_role", _fake_judge)
 
     command = ClassifyContentRoleCommand(catalog)
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.succeeded == 1
     assert result.skipped == 1
@@ -219,7 +218,7 @@ async def test_process_one_raises_with_no_context_when_forced(tmp_path, monkeypa
     _stub_judgment(monkeypatch)
 
     command = ClassifyContentRoleCommand(catalog)
-    result = await command.process(tmp_path, True, True, AsyncMock())
+    result = await command.process(tmp_path, True, True, FakeProgressReporter())
 
     assert result.errored == 1
 
@@ -243,7 +242,7 @@ async def test_force_does_not_bypass_the_agnostic_skip(tmp_path, monkeypatch):
     )
 
     command = ClassifyContentRoleCommand(catalog)
-    result = await command.process(tmp_path, True, True, AsyncMock())
+    result = await command.process(tmp_path, True, True, FakeProgressReporter())
 
     assert calls == []
     assert result.skipped == 1

@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple, TypedDict
 
-from fastmcp import Context
 from sqlmodel import Session, select
 
 from ..catalog import Catalog
@@ -13,6 +12,7 @@ from ..model import Entry, Error
 from ..model.MediaType import MediaType
 from ..model.ProcessingStage import ProcessingStage
 from ..observability import log_event_fields
+from ..progress import ProgressReporter
 from ..tools.entry_queries import entries_by_parent, entries_under
 from ..tools.media_type import detect_media_type, detect_mime_type
 from ..tools.path_helper import walk_filesystem
@@ -111,7 +111,11 @@ class UpdateCatalogCommand:
         session.add(error_row)
 
     async def process(
-        self, starting_path: Path, process_recursively: bool, force: bool, ctx: Context
+        self,
+        starting_path: Path,
+        process_recursively: bool,
+        force: bool,
+        reporter: ProgressReporter,
     ) -> UpdateCatalogResult:
         relative_path = self.catalog.to_relative(starting_path)
         absolute_path = self.catalog.to_absolute(relative_path)
@@ -120,82 +124,81 @@ class UpdateCatalogCommand:
         total = len(candidates)
         scanned = skipped = successfully_processed = errored = 0
         errors: list[ProcessingError] = []
-        last_reported_percent = -1
 
         with session_scope(self.catalog) as session:
-            for index, file_path in enumerate(candidates):
-                scanned += 1
-                entry_relative_path = self.catalog.to_relative(file_path)
-                paths_on_disk.add(entry_relative_path)
-                parent_path = entry_relative_path.parent
-                filename = entry_relative_path.name
+            async with reporter.track(total) as update:
+                for index, file_path in enumerate(candidates):
+                    scanned += 1
+                    entry_relative_path = self.catalog.to_relative(file_path)
+                    paths_on_disk.add(entry_relative_path)
+                    parent_path = entry_relative_path.parent
+                    filename = entry_relative_path.name
 
-                if len(parent_path.parts) < 2:
-                    # A real Entry can never bind with a parent_path this
-                    # shallow (ParentPathType rejects it) -- reject up front
-                    # as a per-file error, the same as `move` does for the
-                    # same constraint, rather than letting the query below
-                    # raise and abort the whole batch.
-                    errored += 1
-                    if len(errors) < self.max_errors:
-                        errors.append(
-                            ProcessingError(
-                                path=entry_relative_path,
-                                reason=(
-                                    f"{entry_relative_path} is too shallow to be "
-                                    "cataloged (need at least a parent and "
-                                    "grandparent folder)"
-                                ),
+                    if len(parent_path.parts) < 2:
+                        # A real Entry can never bind with a parent_path this
+                        # shallow (ParentPathType rejects it) -- reject up front
+                        # as a per-file error, the same as `move` does for the
+                        # same constraint, rather than letting the query below
+                        # raise and abort the whole batch.
+                        errored += 1
+                        if len(errors) < self.max_errors:
+                            errors.append(
+                                ProcessingError(
+                                    path=entry_relative_path,
+                                    reason=(
+                                        f"{entry_relative_path} is too shallow to "
+                                        "be cataloged (need at least a parent and "
+                                        "grandparent folder)"
+                                    ),
+                                )
                             )
-                        )
-                else:
-                    existing = session.exec(
-                        select(Entry).where(
-                            Entry.parent_path == parent_path,
-                            Entry.filename == filename,
-                        )
-                    ).first()
-
-                    should_process = _should_process_row(file_path, existing, force)
-
-                    if not should_process:
-                        skipped += 1
                     else:
-                        try:
-                            fields = _compute_entry_fields(file_path)
-                        except Exception as exc:
-                            errored += 1
-                            error_target = existing or _create_stub_entry(
-                                session, parent_path, filename
+                        existing = session.exec(
+                            select(Entry).where(
+                                Entry.parent_path == parent_path,
+                                Entry.filename == filename,
                             )
-                            self._record_error(
-                                session, error_target, entry_relative_path, exc, errors
-                            )
+                        ).first()
+
+                        should_process = _should_process_row(file_path, existing, force)
+
+                        if not should_process:
+                            skipped += 1
                         else:
-                            successfully_processed += 1
-                            if existing is None:
-                                entry = Entry(
-                                    parent_path=parent_path,
-                                    filename=filename,
-                                    **fields,
+                            try:
+                                fields = _compute_entry_fields(file_path)
+                            except Exception as exc:
+                                errored += 1
+                                error_target = existing or _create_stub_entry(
+                                    session, parent_path, filename
+                                )
+                                self._record_error(
+                                    session,
+                                    error_target,
+                                    entry_relative_path,
+                                    exc,
+                                    errors,
                                 )
                             else:
-                                for key, value in fields.items():
-                                    setattr(existing, key, value)
-                                entry = existing
-                            session.add(entry)
-                            session.flush()
-                            _clear_stale_error(session, entry)
+                                successfully_processed += 1
+                                if existing is None:
+                                    entry = Entry(
+                                        parent_path=parent_path,
+                                        filename=filename,
+                                        **fields,
+                                    )
+                                else:
+                                    for key, value in fields.items():
+                                        setattr(existing, key, value)
+                                    entry = existing
+                                session.add(entry)
+                                session.flush()
+                                _clear_stale_error(session, entry)
 
-                        session.commit()  # Stage 6 — per file, not batched
+                            session.commit()  # Stage 6 — per file, not batched
 
-                percent = (index + 1) * 100 // total if total else 100
-                if percent != last_reported_percent:
-                    await ctx.report_progress(
-                        index + 1, total, f"Scanned {index + 1}/{total}"
-                    )
+                    await update(index + 1, filename, errored)
 
-                last_reported_percent = percent
             removed = 0
             if absolute_path.is_dir():
                 in_scope_entries = (

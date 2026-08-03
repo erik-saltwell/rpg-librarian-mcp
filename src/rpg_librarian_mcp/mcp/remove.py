@@ -8,6 +8,7 @@ from fastmcp import Context, FastMCP
 
 from ..catalog import Catalog
 from ..commands.RemoveCommand import RemoveCommand
+from ..progress import McpProgressReporter
 
 
 def register(mcp: FastMCP, catalog: Catalog) -> None:
@@ -31,5 +32,7 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
         concept to bypass.
         """
         command = RemoveCommand(catalog)
-        result = await command.process(path, process_recursively, force, ctx)
+        result = await command.process(
+            path, process_recursively, force, McpProgressReporter(ctx)
+        )
         return {**result._asdict(), "errors": [e._asdict() for e in result.errors]}

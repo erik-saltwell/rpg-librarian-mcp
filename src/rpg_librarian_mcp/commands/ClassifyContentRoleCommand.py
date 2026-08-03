@@ -5,13 +5,13 @@ from pathlib import Path
 from typing import ClassVar
 
 import litellm
-from fastmcp import Context
 from sqlmodel import Session, select
 
 from ..catalog import Catalog
 from ..db import session_scope
 from ..llm.content_role_judgment import judge_content_role
 from ..model import Entry, Error, PdfContents, ProcessingStage, Product
+from ..progress import ProgressReporter
 from .UpdateBaseCommand import UpdateBaseCommand, UpdateResult
 
 
@@ -39,7 +39,7 @@ class ClassifyContentRoleCommand(UpdateBaseCommand):
         starting_path: Path,
         process_recursively: bool,
         force: bool,
-        ctx: Context,
+        reporter: ProgressReporter,
     ) -> UpdateResult:
         """Same as the base `process`, plus a one-time resolution of which
         products are agnostic.
@@ -59,7 +59,9 @@ class ClassifyContentRoleCommand(UpdateBaseCommand):
                     select(Product).where(Product.system == Product.AGNOSTIC)
                 ).all()
             }
-        return await super().process(starting_path, process_recursively, force, ctx)
+        return await super().process(
+            starting_path, process_recursively, force, reporter
+        )
 
     def in_scope(self, entry: Entry) -> bool:
         """Entries with no product, or an agnostic one, are never classified."""

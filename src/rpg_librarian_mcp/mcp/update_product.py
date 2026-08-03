@@ -9,6 +9,7 @@ from fastmcp import Context, FastMCP
 from ..catalog import Catalog
 from ..commands.UpdateProductCommand import UpdateProductCommand
 from ..model import IdentificationMethod
+from ..progress import McpProgressReporter
 
 
 def register(mcp: FastMCP, catalog: Catalog) -> None:
@@ -49,7 +50,7 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
             process_recursively,
             title,
             identification_method,
-            ctx,
+            McpProgressReporter(ctx),
             description=description,
             artists=artists,
             publisher=publisher,

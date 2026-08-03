@@ -1,5 +1,7 @@
 import sqlite3
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -7,6 +9,41 @@ import pytest
 
 from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.db import ensure_bootstrapped
+from rpg_librarian_mcp.progress import ProgressUpdate
+
+
+class FakeProgressReporter:
+    """A no-op `ProgressReporter` for tests that don't care about progress
+    reporting -- stands in wherever a test previously passed a bare
+    `AsyncMock()` as `ctx`."""
+
+    @asynccontextmanager
+    async def track(self, total: int) -> AsyncIterator[ProgressUpdate]:
+        async def update(current: int, filename: str, errors: int) -> None:
+            pass
+
+        yield update
+
+
+class RecordingProgressReporter:
+    """A `ProgressReporter` that records every `update()` call and whether
+    `track()`'s context manager tore down -- including when the caller's
+    `with` block exits via an uncaught exception (e.g. a fatal exception
+    re-raised out of `UpdateBaseCommand.process`'s loop)."""
+
+    def __init__(self) -> None:
+        self.update_calls: list[tuple[int, str, int]] = []
+        self.torn_down = False
+
+    @asynccontextmanager
+    async def track(self, total: int) -> AsyncIterator[ProgressUpdate]:
+        async def update(current: int, filename: str, errors: int) -> None:
+            self.update_calls.append((current, filename, errors))
+
+        try:
+            yield update
+        finally:
+            self.torn_down = True
 
 
 @pytest.fixture(autouse=True)

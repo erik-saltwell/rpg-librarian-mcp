@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastmcp import Context
 from sqlmodel import Session
 
 from ..catalog import Catalog
 from ..model import Entry, ProcessingStage
+from ..progress import ProgressReporter
 from .UpdateBaseCommand import UpdateBaseCommand, UpdateResult
 
 
@@ -35,7 +35,7 @@ class RemoveCommand(UpdateBaseCommand):
         starting_path: Path,
         process_recursively: bool,
         force: bool,
-        ctx: Context,
+        reporter: ProgressReporter,
     ) -> UpdateResult:
         """Same as the base `process`, plus pruning directories left empty
         by this run's removals.
@@ -50,7 +50,9 @@ class RemoveCommand(UpdateBaseCommand):
         license to also sweep out that path's ancestors.
         """
         self._directories_touched = set()
-        result = await super().process(starting_path, process_recursively, force, ctx)
+        result = await super().process(
+            starting_path, process_recursively, force, reporter
+        )
         self._prune_empty_directories(starting_path)
         return result
 

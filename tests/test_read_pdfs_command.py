@@ -1,12 +1,11 @@
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import litellm
 import pytest
 from sqlmodel import select
 
-from conftest import insert_raw_entry
+from conftest import FakeProgressReporter, insert_raw_entry
 from rpg_librarian_mcp.catalog import Catalog
 from rpg_librarian_mcp.commands import ReadPdfsCommand as read_pdfs_module
 from rpg_librarian_mcp.commands.ReadPdfsCommand import ReadPdfsCommand
@@ -36,7 +35,9 @@ async def _catalog_text_file(tmp_path: Path, filename: str) -> None:
     shelf.mkdir(parents=True, exist_ok=True)
     (shelf / filename).write_text("hello world")
     catalog = _catalog(tmp_path)
-    await UpdateCatalogCommand(catalog).process(tmp_path, True, False, AsyncMock())
+    await UpdateCatalogCommand(catalog).process(
+        tmp_path, True, False, FakeProgressReporter()
+    )
 
 
 def _get_entry(catalog: Catalog, filename: str) -> Entry:
@@ -154,7 +155,7 @@ async def test_force_still_skips_non_pdf_entries(tmp_path, monkeypatch):
     monkeypatch.setattr(read_pdfs_module.fitz, "open", _fail_if_opened)
     command = _command(_catalog(tmp_path))
 
-    result = await command.process(tmp_path, True, True, AsyncMock())
+    result = await command.process(tmp_path, True, True, FakeProgressReporter())
 
     assert result.skipped == 1
     assert result.errored == 0
@@ -169,7 +170,7 @@ async def test_password_protected_pdf_is_skipped_not_erroed(tmp_path, monkeypatc
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: doc)
     command = _command(catalog)
 
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.succeeded == 1
     assert result.errored == 0
@@ -196,7 +197,7 @@ async def test_process_one_persists_barcode_match_and_sample_text(
     )
     command = _command(catalog)
 
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.succeeded == 1
     assert result.errored == 0
@@ -235,7 +236,7 @@ async def test_process_one_skips_llm_when_sample_text_is_empty(tmp_path, monkeyp
     )
     command = _command(catalog)
 
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.succeeded == 1
     with session_scope(catalog) as session:
@@ -263,7 +264,7 @@ async def test_tesseract_missing_aborts_before_any_entry_is_processed(
     command = _command(catalog)
 
     with pytest.raises(RuntimeError, match="tesseract not found"):
-        await command.process(tmp_path, True, False, AsyncMock())
+        await command.process(tmp_path, True, False, FakeProgressReporter())
 
 
 async def test_authentication_error_aborts_the_whole_run(tmp_path, monkeypatch):
@@ -288,7 +289,7 @@ async def test_authentication_error_aborts_the_whole_run(tmp_path, monkeypatch):
     command = _command(catalog)
 
     with pytest.raises(litellm.AuthenticationError):
-        await command.process(tmp_path, True, False, AsyncMock())
+        await command.process(tmp_path, True, False, FakeProgressReporter())
 
     with session_scope(catalog) as session:
         assert session.exec(select(Error)).all() == []
@@ -317,7 +318,7 @@ async def test_non_fatal_llm_error_still_persists_non_llm_signal(tmp_path, monke
     monkeypatch.setattr(read_pdfs_module, "judge_pdf_contents", _raise)
     command = _command(catalog)
 
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.errored == 1
     with session_scope(catalog) as session:
@@ -350,7 +351,7 @@ async def test_non_fatal_llm_error_is_recorded_per_entry(tmp_path, monkeypatch):
     monkeypatch.setattr(read_pdfs_module, "judge_pdf_contents", _raise)
     command = _command(catalog)
 
-    result = await command.process(tmp_path, True, False, AsyncMock())
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
 
     assert result.errored == 1
     with session_scope(catalog) as session:
