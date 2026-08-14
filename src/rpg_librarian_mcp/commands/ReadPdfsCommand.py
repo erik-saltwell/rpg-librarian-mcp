@@ -7,17 +7,19 @@ import fitz
 import litellm
 from sqlmodel import Session
 
+from ..catalog import Catalog
 from ..isbn import isbn, issn
 from ..llm.pdf_judgment import judge_pdf_contents
 from ..metadata.extractors.pdf_extractor import PdfExtractor
-from ..model import Entry, Error, MediaType, PdfContents
+from ..model import Entry, Error, MediaType, PdfContents, PdfMetadata, ProcessingStage
 from ..observability import log_entry_fields
 from ..progress import ProgressReporter
-from ..tools.barcode import find_isbn_or_issn_barcode
+from ..tools.barcode import find_isbn_or_issn_barcode_isolated
+from ..tools.isolated_worker import IsolatedWorkerPool, WorkerPool
 from ..tools.ocr import check_tesseract_available
 from ..tools.text_extraction import (
     barcode_sample_pages,
-    extract_page_texts,
+    extract_page_texts_isolated,
     sample_text_json,
     text_sample_pages,
 )
@@ -30,19 +32,40 @@ class ReadPdfsCommand(UpdateBaseCommand):
         litellm.RateLimitError,
     )
 
+    def __init__(
+        self,
+        catalog: Catalog,
+        processing_stage: ProcessingStage,
+        max_errors: int = 50,
+        pdf_pool: WorkerPool | None = None,
+    ) -> None:
+        super().__init__(catalog, processing_stage, max_errors)
+        # Same reasoning as `UpdateMetadataCommand._mesh_pool` -- one
+        # worker subprocess, persisting for the command's whole lifetime.
+        self._pdf_pool: WorkerPool = (
+            pdf_pool if pdf_pool is not None else IsolatedWorkerPool()
+        )
+        self._ignore_likely_image_only = False
+
     async def process(
         self,
         starting_path: Path,
         process_recursively: bool,
         force: bool,
         reporter: ProgressReporter,
+        ignore_likely_image_only: bool = False,
     ) -> UpdateResult:
         """Same as the base `process`, plus a one-time Tesseract check.
 
         A missing Tesseract binary is an environment misconfiguration, not a
         per-file problem, so it must fail the whole run up front rather than
         erroring every scanned PDF individually.
+
+        `ignore_likely_image_only` is stashed on `self` for `process_one` to
+        read -- `process_one`'s signature is fixed by `UpdateBaseCommand`, so
+        it can't take this as a direct argument.
         """
+        self._ignore_likely_image_only = ignore_likely_image_only
         check_tesseract_available()
         return await super().process(
             starting_path, process_recursively, force, reporter
@@ -66,15 +89,54 @@ class ReadPdfsCommand(UpdateBaseCommand):
                 return
 
             page_count = doc.page_count
-            barcode_match = find_isbn_or_issn_barcode(
-                doc, barcode_sample_pages(page_count)
-            )
-            page_texts = extract_page_texts(doc, text_sample_pages(page_count))
         finally:
             doc.close()
 
+        # `UpdateMetadataCommand` (stage `extract_metadata`, which always
+        # runs before `read_pdfs`) already computed and persisted this via
+        # `PdfExtractor` -- no need to redo the render+OCR work here. A
+        # missing/undetermined row is treated as not image-only, same as
+        # `PdfExtractor._get_likely_image_only`'s `None` case.
+        pdf_metadata = session.get(PdfMetadata, entry.id)
+        likely_image_only = bool(pdf_metadata and pdf_metadata.likely_image_only)
+
+        if likely_image_only:
+            self._process_likely_image_only(session, file_path, entry, page_count)
+        else:
+            self._process_normal(session, file_path, entry, page_count)
+
+    def _process_likely_image_only(
+        self, session: Session, file_path: Path, entry: Entry, page_count: int
+    ) -> None:
+        if self._ignore_likely_image_only:
+            return
+        self._process_normal(session, file_path, entry, page_count)
+
+    def _process_normal(
+        self, session: Session, file_path: Path, entry: Entry, page_count: int
+    ) -> None:
+        # Both isolated in the same worker subprocess/timeout -- PyMuPDF
+        # rendering is the risky part of this file, whether it's rendering
+        # for barcode scanning or for OCR, and either can hang or crash on
+        # a malformed page. Each reopens `file_path` itself; see
+        # `find_isbn_or_issn_barcode_isolated` / `extract_page_texts_isolated`.
+        barcode_match = self._pdf_pool.submit(
+            find_isbn_or_issn_barcode_isolated,
+            file_path,
+            barcode_sample_pages(page_count),
+        )
+
+        page_text_result = self._pdf_pool.submit(
+            extract_page_texts_isolated, file_path, text_sample_pages(page_count)
+        )
+        page_texts = page_text_result.page_texts
+
         log_entry_fields(
-            page_count=page_count, barcode_matched=barcode_match is not None
+            page_count=page_count,
+            barcode_matched=barcode_match is not None,
+            pages_sampled=page_text_result.pages_sampled,
+            pages_direct_extraction=page_text_result.pages_direct_extraction,
+            pages_ocr=page_text_result.pages_ocr,
         )
 
         content = "\n".join(page_texts.values())

@@ -6,6 +6,7 @@ import pytest
 from rpg_librarian_mcp.metadata.extractors import pdf_extractor
 from rpg_librarian_mcp.metadata.extractors.pdf_extractor import PdfExtractor
 from rpg_librarian_mcp.model import PdfMetadata
+from rpg_librarian_mcp.tools.isolated_worker import SynchronousWorkerPool
 
 
 class _Doc:
@@ -40,6 +41,53 @@ def test_extract_custom_metadata_returns_pdf_flags_and_page_signals(monkeypatch)
     assert metadata.needs_password is False
     assert metadata.has_extractable_text is True
     assert metadata.likely_scanned is False
+    assert metadata.likely_image_only is False
+
+
+def test_likely_image_only_is_false_for_multi_page_docs_without_using_the_pool(
+    monkeypatch,
+):
+    _no_media_info(monkeypatch)
+    monkeypatch.setattr(pdf_extractor.fitz, "open", lambda file_path: _Doc())
+
+    def _fail_if_called(file_path):
+        raise AssertionError("must not OCR a multi-page document")
+
+    monkeypatch.setattr(pdf_extractor, "is_likely_image_only_isolated", _fail_if_called)
+
+    metadata = PdfExtractor(Path("book.pdf")).extract_custom_metadata()
+
+    assert isinstance(metadata, PdfMetadata)
+    assert metadata.likely_image_only is False
+
+
+def test_likely_image_only_is_none_for_password_protected_pdfs(monkeypatch):
+    _no_media_info(monkeypatch)
+    doc = _Doc()
+    doc.needs_pass = True
+    monkeypatch.setattr(pdf_extractor.fitz, "open", lambda file_path: doc)
+
+    metadata = PdfExtractor(Path("book.pdf")).extract_custom_metadata()
+
+    assert isinstance(metadata, PdfMetadata)
+    assert metadata.likely_image_only is None
+
+
+def test_likely_image_only_delegates_to_the_pool_for_single_page_docs(monkeypatch):
+    _no_media_info(monkeypatch)
+    doc = _Doc()
+    doc.page_count = 1
+    monkeypatch.setattr(pdf_extractor.fitz, "open", lambda file_path: doc)
+    monkeypatch.setattr(
+        pdf_extractor, "is_likely_image_only_isolated", lambda file_path: True
+    )
+
+    metadata = PdfExtractor(
+        Path("book.pdf"), pool=SynchronousWorkerPool()
+    ).extract_custom_metadata()
+
+    assert isinstance(metadata, PdfMetadata)
+    assert metadata.likely_image_only is True
 
 
 def test_extract_file_metadata_reads_title_and_author_from_pdf_metadata(monkeypatch):

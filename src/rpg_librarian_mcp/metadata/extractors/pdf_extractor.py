@@ -7,6 +7,8 @@ import fitz
 from pymediainfo import MediaInfo
 
 from ...model import PdfMetadata
+from ...tools.isolated_worker import IsolatedWorkerPool, WorkerPool
+from ...tools.text_extraction import is_likely_image_only_isolated
 from ..MetadataExtractor import MetadataExtractor
 
 # Only the first few pages are sampled for text/image analysis - enough to
@@ -89,9 +91,11 @@ def get_likely_scanned(doc: fitz.Document) -> bool | None:
 
 
 class PdfExtractor(MetadataExtractor):
-    def __init__(self, file_path: Path) -> None:
+    def __init__(self, file_path: Path, pool: WorkerPool | None = None) -> None:
+        self._path = file_path
         self._media_info: MediaInfo = MediaInfo.parse(filename=file_path)
         self._doc: fitz.Document = fitz.open(file_path)
+        self._pool: WorkerPool = pool if pool is not None else IsolatedWorkerPool()
 
     def extract_value(self, field: str) -> str | None:
         key = field.lower()
@@ -115,10 +119,24 @@ class PdfExtractor(MetadataExtractor):
         needs_password = get_needs_password(self._doc)
         has_extractable_text = get_has_extractable_text(self._doc)
         likely_scanned = get_likely_scanned(self._doc)
+        likely_image_only = self._get_likely_image_only(page_count)
         return PdfMetadata(
             page_count=page_count,
             is_encrypted=is_encrypted,
             needs_password=needs_password,
             has_extractable_text=has_extractable_text,
             likely_scanned=likely_scanned,
+            likely_image_only=likely_image_only,
         )
+
+    def _get_likely_image_only(self, page_count: int) -> bool | None:
+        """None mirrors `get_has_extractable_text`/`get_likely_scanned` --
+        undetermined for an unreadable/empty document. `page_count != 1` is
+        answered without OCR; only a genuine single-page candidate pays for
+        the isolated render+OCR call.
+        """
+        if self._doc.needs_pass or page_count == 0:
+            return None
+        if page_count != 1:
+            return False
+        return self._pool.submit(is_likely_image_only_isolated, self._path)

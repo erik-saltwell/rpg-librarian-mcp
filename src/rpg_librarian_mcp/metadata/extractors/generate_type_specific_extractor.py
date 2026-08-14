@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from ...model import MediaType
+from ...tools.isolated_worker import WorkerPool
 from ..MetadataExtractor import MetadataExtractor
 from .audio_extractor import AudioExtractor
 from .image_extractor import ImageExtractor
@@ -28,7 +29,9 @@ class NoMetadataExtractor(MetadataExtractor):
         return None
 
 
-def generate_extractor(media_type: MediaType, file_path: Path) -> MetadataExtractor:
+def generate_extractor(
+    media_type: MediaType, file_path: Path, pool: WorkerPool | None = None
+) -> MetadataExtractor:
     match media_type:
         case MediaType.audio:
             return AudioExtractor(file_path)
@@ -41,10 +44,10 @@ def generate_extractor(media_type: MediaType, file_path: Path) -> MetadataExtrac
             extension = file_path.suffix.lower().removeprefix(".")
             if extension not in _SUPPORTED_MESH_EXTENSIONS:
                 return NoMetadataExtractor()
-            return MeshExtractor(file_path)
+            return MeshExtractor(file_path, pool)
         case MediaType.video:
             return VideoExtractor(file_path)
         case MediaType.pdf:
-            return PdfExtractor(file_path)
+            return PdfExtractor(file_path, pool)
         case _:
             return NoMetadataExtractor()

@@ -11,9 +11,16 @@ from rpg_librarian_mcp.commands import ReadPdfsCommand as read_pdfs_module
 from rpg_librarian_mcp.commands.ReadPdfsCommand import ReadPdfsCommand
 from rpg_librarian_mcp.commands.UpdateCatalogCommand import UpdateCatalogCommand
 from rpg_librarian_mcp.db import session_scope
-from rpg_librarian_mcp.model import Entry, Error, PdfContents, ProcessingStage
+from rpg_librarian_mcp.model import (
+    Entry,
+    Error,
+    PdfContents,
+    PdfMetadata,
+    ProcessingStage,
+)
 from rpg_librarian_mcp.observability import EntryTracker
 from rpg_librarian_mcp.tools import text_extraction
+from rpg_librarian_mcp.tools.isolated_worker import SynchronousWorkerPool
 
 
 def _catalog(tmp_path: Path) -> Catalog:
@@ -66,7 +73,9 @@ class _EmptyDoc(_Doc):
 
 
 def _command(catalog: Catalog) -> ReadPdfsCommand:
-    return ReadPdfsCommand(catalog, ProcessingStage.read_pdfs)
+    return ReadPdfsCommand(
+        catalog, ProcessingStage.read_pdfs, pdf_pool=SynchronousWorkerPool()
+    )
 
 
 def _no_tesseract_check(monkeypatch) -> None:
@@ -75,7 +84,9 @@ def _no_tesseract_check(monkeypatch) -> None:
 
 def _no_barcode_match(monkeypatch) -> None:
     monkeypatch.setattr(
-        read_pdfs_module, "find_isbn_or_issn_barcode", lambda doc, pages: None
+        read_pdfs_module,
+        "find_isbn_or_issn_barcode_isolated",
+        lambda file_path, pages: None,
     )
 
 
@@ -86,6 +97,104 @@ def _no_llm_call(monkeypatch) -> None:
         "judge_pdf_contents",
         lambda sample_text: SimpleNamespace(description=None, possible_system=None),
     )
+
+
+def _set_likely_image_only(catalog: Catalog, entry: Entry, value: bool) -> None:
+    """Read-pdfs now reads this off the `PdfMetadata` row that
+    `extract_metadata` (which always runs first) is responsible for
+    populating, rather than recomputing it itself.
+    """
+    with session_scope(catalog) as session:
+        session.merge(PdfMetadata(entry_id=entry.id, likely_image_only=value))
+        session.commit()
+
+
+async def test_likely_image_only_is_skipped_when_ignore_flag_is_set(
+    tmp_path, monkeypatch
+):
+    catalog = _catalog(tmp_path)
+    _insert_pdf_entry(catalog)
+    entry = _get_entry(catalog, "book.pdf")
+    _no_tesseract_check(monkeypatch)
+    monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
+    _set_likely_image_only(catalog, entry, True)
+
+    def _fail_if_called(file_path, pages):
+        raise AssertionError("must not process a skipped image-only PDF")
+
+    monkeypatch.setattr(
+        read_pdfs_module, "find_isbn_or_issn_barcode_isolated", _fail_if_called
+    )
+    command = _command(catalog)
+
+    result = await command.process(
+        tmp_path, True, False, FakeProgressReporter(), ignore_likely_image_only=True
+    )
+
+    assert result.succeeded == 1
+    assert result.errored == 0
+    with session_scope(catalog) as session:
+        assert session.get(PdfContents, entry.id) is None
+
+
+async def test_likely_image_only_is_processed_normally_when_flag_is_not_set(
+    tmp_path, monkeypatch
+):
+    catalog = _catalog(tmp_path)
+    _insert_pdf_entry(catalog)
+    entry = _get_entry(catalog, "book.pdf")
+    _no_tesseract_check(monkeypatch)
+    _no_llm_call(monkeypatch)
+    _no_barcode_match(monkeypatch)
+    monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
+    _set_likely_image_only(catalog, entry, True)
+    monkeypatch.setattr(
+        read_pdfs_module.PdfExtractor, "__init__", lambda self, file_path: None
+    )
+    monkeypatch.setattr(
+        read_pdfs_module.PdfExtractor, "extract_isbn", lambda self: None
+    )
+    monkeypatch.setattr(
+        read_pdfs_module.PdfExtractor, "extract_issn", lambda self: None
+    )
+    command = _command(catalog)
+
+    result = await command.process(tmp_path, True, False, FakeProgressReporter())
+
+    assert result.succeeded == 1
+    with session_scope(catalog) as session:
+        assert session.get(PdfContents, entry.id) is not None
+
+
+async def test_normal_pdf_is_processed_even_when_ignore_flag_is_set(
+    tmp_path, monkeypatch
+):
+    catalog = _catalog(tmp_path)
+    _insert_pdf_entry(catalog)
+    entry = _get_entry(catalog, "book.pdf")
+    _no_tesseract_check(monkeypatch)
+    _no_llm_call(monkeypatch)
+    _no_barcode_match(monkeypatch)
+    monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
+    _set_likely_image_only(catalog, entry, False)
+    monkeypatch.setattr(
+        read_pdfs_module.PdfExtractor, "__init__", lambda self, file_path: None
+    )
+    monkeypatch.setattr(
+        read_pdfs_module.PdfExtractor, "extract_isbn", lambda self: None
+    )
+    monkeypatch.setattr(
+        read_pdfs_module.PdfExtractor, "extract_issn", lambda self: None
+    )
+    command = _command(catalog)
+
+    result = await command.process(
+        tmp_path, True, False, FakeProgressReporter(), ignore_likely_image_only=True
+    )
+
+    assert result.succeeded == 1
+    with session_scope(catalog) as session:
+        assert session.get(PdfContents, entry.id) is not None
 
 
 async def test_in_scope_is_false_for_non_pdf_entries(tmp_path):
@@ -191,8 +300,8 @@ async def test_process_one_persists_barcode_match_and_sample_text(
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
     monkeypatch.setattr(
         read_pdfs_module,
-        "find_isbn_or_issn_barcode",
-        lambda doc, pages: SimpleNamespace(
+        "find_isbn_or_issn_barcode_isolated",
+        lambda file_path, pages: SimpleNamespace(
             barcode_text="9780306406157", isbn="9780306406157", issn=None
         ),
     )
@@ -260,7 +369,9 @@ async def test_process_one_skips_llm_when_sample_text_is_empty(tmp_path, monkeyp
     _no_tesseract_check(monkeypatch)
     _no_barcode_match(monkeypatch)
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _EmptyDoc())
-    monkeypatch.setattr(text_extraction, "render_page_image", lambda page: "image")
+    monkeypatch.setattr(
+        text_extraction, "render_page_image", lambda page, dpi=None: "image"
+    )
     monkeypatch.setattr(text_extraction, "ocr_page_image", lambda image: "")
 
     def _fail_if_called(sample_text):
@@ -316,8 +427,8 @@ async def test_authentication_error_aborts_the_whole_run(tmp_path, monkeypatch):
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
     monkeypatch.setattr(
         read_pdfs_module,
-        "find_isbn_or_issn_barcode",
-        lambda doc, pages: SimpleNamespace(
+        "find_isbn_or_issn_barcode_isolated",
+        lambda file_path, pages: SimpleNamespace(
             barcode_text="9780306406157", isbn="9780306406157", issn=None
         ),
     )
@@ -348,8 +459,8 @@ async def test_non_fatal_llm_error_still_persists_non_llm_signal(tmp_path, monke
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
     monkeypatch.setattr(
         read_pdfs_module,
-        "find_isbn_or_issn_barcode",
-        lambda doc, pages: SimpleNamespace(
+        "find_isbn_or_issn_barcode_isolated",
+        lambda file_path, pages: SimpleNamespace(
             barcode_text="9780306406157", isbn="9780306406157", issn=None
         ),
     )
@@ -381,8 +492,8 @@ async def test_non_fatal_llm_error_is_recorded_per_entry(tmp_path, monkeypatch):
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
     monkeypatch.setattr(
         read_pdfs_module,
-        "find_isbn_or_issn_barcode",
-        lambda doc, pages: SimpleNamespace(
+        "find_isbn_or_issn_barcode_isolated",
+        lambda file_path, pages: SimpleNamespace(
             barcode_text="9780306406157", isbn="9780306406157", issn=None
         ),
     )

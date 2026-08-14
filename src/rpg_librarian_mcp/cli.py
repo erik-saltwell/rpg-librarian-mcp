@@ -34,6 +34,7 @@ from .commands.UpdateMetadataCommand import UpdateMetadataCommand
 from .commands.UpdateProductCommand import UpdateProductCommand
 from .db import session_scope
 from .dtrpg import DriveThruRPGClient
+from .mcp.clear_metadata import clear_metadata
 from .mcp.directory_status import list_directory_entries, summarize_directories
 from .mcp.entry_details import get_entry_details
 from .mcp.errors import list_errors
@@ -133,6 +134,10 @@ def cmd_clear_logs(args: argparse.Namespace, catalog: Catalog) -> None:
     _print(clear_logs_files(catalog.catalog_dir))
 
 
+def cmd_clear_metadata(args: argparse.Namespace, catalog: Catalog) -> None:
+    _print(clear_metadata(catalog))
+
+
 def cmd_update_catalog(args: argparse.Namespace, catalog: Catalog) -> None:
     command = UpdateCatalogCommand(catalog)
     result = asyncio.run(
@@ -152,7 +157,13 @@ def cmd_update_metadata(args: argparse.Namespace, catalog: Catalog) -> None:
 def cmd_read_pdfs(args: argparse.Namespace, catalog: Catalog) -> None:
     command = ReadPdfsCommand(catalog, ProcessingStage.read_pdfs)
     result = asyncio.run(
-        command.process(args.path, args.recursive, args.force, CliProgressReporter())
+        command.process(
+            args.path,
+            args.recursive,
+            args.force,
+            CliProgressReporter(),
+            ignore_likely_image_only=args.ignore_likely_image_only,
+        )
     )
     _print(_update_result(result))
 
@@ -306,6 +317,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     clear_logs.set_defaults(func=cmd_clear_logs)
 
+    clear_metadata_parser = subparsers.add_parser(
+        "clear-metadata",
+        help=(
+            "Delete all generic and type-specific metadata so every entry "
+            "is reprocessed by the next update-metadata run."
+        ),
+    )
+    clear_metadata_parser.set_defaults(func=cmd_clear_metadata)
+
     update_catalog = subparsers.add_parser(
         "update-catalog", help="Scan a file or directory and update the catalog."
     )
@@ -322,6 +342,13 @@ def build_parser() -> argparse.ArgumentParser:
         "read-pdfs", help="Extract barcode/ISBN/sample-text/LLM signal from PDFs."
     )
     _add_path_recursive_force(read_pdfs)
+    read_pdfs.add_argument(
+        "--ignore-likely-image-only",
+        dest="ignore_likely_image_only",
+        action="store_true",
+        help="Skip PDFs that look like a single-page image with no real "
+        "text (e.g. a poster/battle map) instead of reading them.",
+    )
     read_pdfs.set_defaults(func=cmd_read_pdfs)
 
     classify_content_role = subparsers.add_parser(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import ClassVar, NamedTuple
@@ -44,6 +45,16 @@ class UpdateBaseCommand(CommandProtocol, ABC):
     #: entry (e.g. bad credentials, exhausted rate limit), where catching
     #: and continuing would just produce N identical per-entry errors.
     fatal_exceptions: ClassVar[tuple[type[BaseException], ...]] = ()
+
+    #: How often (in scanned entries) to force a GC pass during a run. Some
+    #: extractors (trimesh meshes, PIL images, video/audio parsers) build
+    #: large buffers wrapped in reference cycles that the incremental
+    #: collector doesn't reliably reclaim between entries -- on a run over
+    #: tens of thousands of entries those can pile up and exhaust memory
+    #: well before any single file is at fault. A periodic full collection
+    #: bounds that growth instead of letting it accumulate for the run's
+    #: entire duration.
+    _gc_interval: ClassVar[int] = 50
 
     def __init__(
         self,
@@ -209,6 +220,9 @@ class UpdateBaseCommand(CommandProtocol, ABC):
                         errored=errored,
                     )
                     await update(index + 1, entry_relative_path.name, errored)
+
+                    if scanned % self._gc_interval == 0:
+                        gc.collect()
 
         return UpdateResult(
             scanned=scanned,

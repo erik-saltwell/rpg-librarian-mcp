@@ -21,6 +21,7 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
         ctx: Context,
         process_recursively: bool = False,
         force: bool = False,
+        ignore_likely_image_only: bool = False,
     ) -> dict[str, object]:
         """Extract and persist barcode/ISBN/ISSN/sample-text/LLM-derived
         signal for a PDF file or directory of PDFs.
@@ -29,9 +30,16 @@ def register(mcp: FastMCP, catalog: Catalog) -> None:
         directory; directories are non-recursive unless
         `process_recursively` is set. Non-PDF entries are skipped, not
         errored. `force` bypasses the "skip if unchanged" check and
-        reprocesses every matched PDF.
+        reprocesses every matched PDF. `ignore_likely_image_only` skips PDFs
+        that look like a single-page image with no real text (e.g. a
+        poster/battle map) instead of reading them -- those are typically
+        slow to OCR and yield little or no useful text.
         """
         result = await command.process(
-            path, process_recursively, force, McpProgressReporter(ctx)
+            path,
+            process_recursively,
+            force,
+            McpProgressReporter(ctx),
+            ignore_likely_image_only=ignore_likely_image_only,
         )
         return {**result._asdict(), "errors": [e._asdict() for e in result.errors]}

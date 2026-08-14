@@ -73,7 +73,7 @@
             "module": "rpg_librarian_mcp",
             "console": "integratedTerminal",
             "cwd": "${env:HOME}/data/rpg",
-            "args": ["read-pdfs", "${input:path}", "-r"]
+            "args": ["read-pdfs", "${input:path}", "-r", "--ignore-likely-image-only"]
         },
         {
             "name": "cli: classify-content-role",
@@ -252,6 +252,15 @@
             "console": "integratedTerminal",
             "cwd": "${env:HOME}/data/rpg",
             "args": ["search-dtrpg", "${input:queryText}"]
+        },
+        {
+            "name": "cli: clear-metadata",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "rpg_librarian_mcp",
+            "console": "integratedTerminal",
+            "cwd": "${env:HOME}/data/rpg",
+            "args": ["clear-metadata"]
         },
         {
             "name": "Integration Tests",

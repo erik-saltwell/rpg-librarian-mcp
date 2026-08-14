@@ -209,6 +209,8 @@ def test_status_command_reports_library_root(tmp_path, monkeypatch, capsys):
         ["search-rpg-geek", "--name", "n"],
         ["lookup-rpg-geek-product", "1"],
         ["search-dtrpg", "q"],
+        ["clear-logs"],
+        ["clear-metadata"],
     ],
 )
 def test_every_subcommand_parses_and_dispatches_to_a_handler(argv):

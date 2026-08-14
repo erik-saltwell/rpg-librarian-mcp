@@ -13,3 +13,4 @@ class PdfMetadata(EntryMetadataBase, table=True):
     needs_password: bool | None = Field(default=None, nullable=True)
     has_extractable_text: bool | None = Field(default=None, nullable=True)
     likely_scanned: bool | None = Field(default=None, nullable=True)
+    likely_image_only: bool | None = Field(default=None, nullable=True)

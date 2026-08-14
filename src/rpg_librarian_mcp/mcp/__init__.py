@@ -14,6 +14,7 @@ from ..catalog import Catalog
 from . import (
     classify_content_role,
     clear_logs,
+    clear_metadata,
     directory_status,
     dtrpg,
     entry_details,
@@ -59,6 +60,7 @@ REGISTRARS: Sequence[Registrar] = (
     review_items.register,
     entry_details.register,
     clear_logs.register,
+    clear_metadata.register,
 )
 
 __all__ = [

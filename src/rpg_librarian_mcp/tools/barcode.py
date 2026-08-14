@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import fitz
 import zxingcpp
@@ -36,6 +37,22 @@ def find_isbn_or_issn_barcode(
             if match is not None:
                 return match
     return None
+
+
+def find_isbn_or_issn_barcode_isolated(
+    file_path: Path, pages: set[int]
+) -> BarcodeMatch | None:
+    """Same barcode scan as `find_isbn_or_issn_barcode`, but opens
+    `file_path` itself and is meant to be run through `WorkerPool.submit`
+    -- `render_page_image` is the same PyMuPDF rendering used for OCR, and
+    is just as capable of hanging or crashing on a malformed page, so it
+    needs the same subprocess isolation and timeout.
+    """
+    doc = fitz.open(file_path)
+    try:
+        return find_isbn_or_issn_barcode(doc, pages)
+    finally:
+        doc.close()
 
 
 def _resolve(text: str) -> BarcodeMatch | None:

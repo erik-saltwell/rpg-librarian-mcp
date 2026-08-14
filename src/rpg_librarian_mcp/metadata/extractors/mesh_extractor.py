@@ -11,6 +11,7 @@ import trimesh.util
 import trimesh.visual
 
 from ...model import LengthUnit, MeshMetadata
+from ...tools.isolated_worker import IsolatedWorkerPool, WorkerPool
 from ..MetadataExtractor import MetadataExtractor
 
 
@@ -54,7 +55,7 @@ def units_from_metadata(file_path: Path) -> str:
                         return unit
         return "mm"
 
-    except zipfile.BadZipFile, Exception:
+    except Exception:
         return "mm"
 
 
@@ -79,7 +80,7 @@ def _extract_3mf_metadata(path: Path) -> dict[str, str]:
                         if name and value:
                             meta[name] = value
 
-    except zipfile.BadZipFile, Exception:
+    except Exception:
         pass
 
     return meta
@@ -130,13 +131,57 @@ def _length_unit_from_raw(raw_unit: str | None) -> LengthUnit | None:
         return None
 
 
+class MeshExtractionResult(NamedTuple):
+    bounding_box_x: float | None
+    bounding_box_y: float | None
+    bounding_box_z: float | None
+    surface_area: float | None
+    unit: str | None
+
+
+def extract_mesh_metadata(file_path: Path) -> MeshExtractionResult:
+    """Load `file_path` and compute its geometry summary.
+
+    This is the actual risky call -- `trimesh.load` on an arbitrary,
+    possibly-huge, user-supplied 3D file -- so it's run through
+    `WorkerPool.submit` (a subprocess in production) instead of directly in
+    `MeshExtractor.__init__`. Must stay a plain top-level function taking/
+    returning only picklable primitives: nothing here can hand back the
+    `trimesh.Trimesh` object itself.
+
+    `process=False` skips trimesh's default vertex-merge/dedup pass. We
+    only ever read `bounds` (plain min/max) and `area` (sum of face areas)
+    off the result, neither of which needs merged topology -- but the
+    merge itself is the expensive part for a dense, support-strut-heavy
+    3D-print STL (millions of near-duplicate vertices), and has taken down
+    a whole run's process before. See `get_extents_from_mesh` below for the
+    same reasoning applied to the (now-avoided) convex-hull bounding box.
+    """
+    loaded = trimesh.load(str(file_path), force="mesh", process=False)
+    mesh = loaded if isinstance(loaded, trimesh.Trimesh) else None
+
+    extents: BoundingBoxExtents | None = None
+    surface_area: float | None = None
+    if mesh is not None:
+        extents = get_extents_from_mesh(mesh)
+        surface_area = get_surface_area_cm_from_mesh(mesh)
+
+    return MeshExtractionResult(
+        bounding_box_x=extents.x_mm if extents is not None else None,
+        bounding_box_y=extents.y_mm if extents is not None else None,
+        bounding_box_z=extents.z_mm if extents is not None else None,
+        surface_area=surface_area,
+        unit=units_from_mesh(file_path),
+    )
+
+
 class MeshExtractor(MetadataExtractor):
-    def __init__(self, file_path: Path):
+    def __init__(self, file_path: Path, pool: WorkerPool | None = None):
         self._path = file_path
         self._meta = _extract_3mf_metadata(file_path)
-        loaded = trimesh.load(str(file_path), force="mesh")
-        self._mesh: trimesh.Trimesh | None = (
-            loaded if isinstance(loaded, trimesh.Trimesh) else None
+        self._pool: WorkerPool = pool if pool is not None else IsolatedWorkerPool()
+        self._result: MeshExtractionResult = self._pool.submit(
+            extract_mesh_metadata, file_path
         )
 
     def extract_value(self, field: str) -> str | None:
@@ -149,15 +194,11 @@ class MeshExtractor(MetadataExtractor):
         return None
 
     def extract_custom_metadata(self) -> Any | None:
-        extents: BoundingBoxExtents | None = None
-        surface_area: float | None = None
-        if self._mesh is not None:
-            extents = get_extents_from_mesh(self._mesh)
-            surface_area = get_surface_area_cm_from_mesh(self._mesh)
+        result = self._result
         return MeshMetadata(
-            bounding_box_x=extents.x_mm if extents is not None else None,
-            bounding_box_y=extents.y_mm if extents is not None else None,
-            bounding_box_z=extents.z_mm if extents is not None else None,
-            surface_area=surface_area,
-            unit=_length_unit_from_raw(units_from_mesh(self._path)),
+            bounding_box_x=result.bounding_box_x,
+            bounding_box_y=result.bounding_box_y,
+            bounding_box_z=result.bounding_box_z,
+            surface_area=result.surface_area,
+            unit=_length_unit_from_raw(result.unit),
         )

@@ -56,7 +56,7 @@ async def test_process_one_persists_generic_and_type_specific_metadata(
 
     monkeypatch.setattr(
         "rpg_librarian_mcp.commands.UpdateMetadataCommand.generate_extractor",
-        lambda media_type, file_path: _FakeExtractor(),
+        lambda media_type, file_path, mesh_pool=None: _FakeExtractor(),
     )
     command = UpdateMetadataCommand(catalog, ProcessingStage.extract_metadata)
 
@@ -197,7 +197,7 @@ async def test_extractor_failure_is_recorded_as_an_error(tmp_path, monkeypatch):
     await _catalog_file(tmp_path, "shelf/box", "book.txt", "hello")
     catalog = _catalog(tmp_path)
 
-    def _raise(media_type, file_path):
+    def _raise(media_type, file_path, mesh_pool=None):
         raise ValueError("unreadable file")
 
     monkeypatch.setattr(

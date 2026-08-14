@@ -46,6 +46,7 @@ async def test_all_tools_are_registered():
         "list_review_items",
         "get_entry_details",
         "clear_logs",
+        "clear_metadata",
     }
 
 
