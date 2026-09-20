@@ -85,17 +85,17 @@ returns results in a manual request.
 
 ## Phase 0: app scaffold and tooling
 
-- [ ] Create `apps/rpg-librarian/pyproject.toml` (hatchling, `requires-python >=3.14`,
+- [x] Create `apps/rpg-librarian/pyproject.toml` (hatchling, `requires-python >=3.14`,
       `[project.scripts] rpg-librarian = "rpg_librarian.__main__:main"`,
       `rpg-librarian-tools = { workspace = true }`), `README.md`, and
       `src/rpg_librarian/{__init__,__main__}.py` with an argparse parser that has the
       five verbs as stubs plus `serve` for the MCP server.
-- [ ] Create `apps/rpg-librarian/tests/` with a `.gitkeep`-equivalent (a `conftest.py`
+- [x] Create `apps/rpg-librarian/tests/` with a `.gitkeep`-equivalent (a `conftest.py`
       is acceptable) so the pytest path exists; add no tests.
-- [ ] Add `./apps/rpg-librarian/src` and `./apps/rpg-librarian/tests` to
+- [x] Add `./apps/rpg-librarian/src` and `./apps/rpg-librarian/tests` to
       `[tool.ty.environment] root` and `apps/rpg-librarian/tests` to pytest
       `testpaths` in the root `pyproject.toml`.
-- [ ] Add config loading: `.env` via python-dotenv (port `catalog.load_env`), catalog
+- [x] Add config loading: `.env` via python-dotenv (port `catalog.load_env`), catalog
       path resolution per unknown 1.
 
 Depends on: nothing. Outcome: `uv run rpg-librarian --help` lists the verbs;

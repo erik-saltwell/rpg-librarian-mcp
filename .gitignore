@@ -30,3 +30,6 @@ wheels/
 
 .catalog_archive/
 .catalog_archive
+
+# rpg-librarian app: working catalog database (personal data)
+catalog.db

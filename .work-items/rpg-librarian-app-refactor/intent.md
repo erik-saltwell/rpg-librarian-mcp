@@ -58,13 +58,9 @@ reuse.
   members`, `[tool.ruff] src`, `[tool.ty.environment] root`, and
   `[tool.pytest.ini_options] testpaths` in the root `pyproject.toml`. An app under
   `apps/` is invisible to the workspace resolver, linter, type checker, and test
-  runner until all four are updated. **Partly done:** the root `pyproject.toml`
-  includes `apps/*` in the workspace and `apps/rpg-librarian/{src,tests}` in the ruff
-  paths, so the app lives at `apps/rpg-librarian`. **Still to do when the app
-  skeleton is created:** add `./apps/rpg-librarian/src` and `./apps/rpg-librarian/tests`
-  to `[tool.ty.environment] root`, and `apps/rpg-librarian/tests` to pytest
-  `testpaths`. They were left out because ty errors on a root that does not exist
-  yet. The `packages/*` entries stay until the v1 package is removed.
+  runner until all four are updated. **Done:** the root `pyproject.toml` includes `apps/*` in the workspace and
+  `apps/rpg-librarian/{src,tests}` in the ruff, ty, and pytest paths, so the app lives at
+  `apps/rpg-librarian`. The `packages/*` entries stay until the v1 package is removed.
 
 ## Core architectural decision: the database is master
 

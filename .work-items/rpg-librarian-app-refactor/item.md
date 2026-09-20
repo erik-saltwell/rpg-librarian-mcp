@@ -1,6 +1,6 @@
 ---
 name: "Refactor rpg-librarian to new app"
-status: planning
+status: implementing
 ---
 
 # Refactor rpg-librarian to new app
@@ -25,17 +25,19 @@ CLI true-up.
   `scan`, `enrich`, MCP surface and `update_product`, `reorganize`, v1 removal. Lists
   the v1 code to port and the agreed decisions. `enrich` includes a simple Google search
   per file, fetched through Serper.dev.
+- [progress.md](progress.md) — current handoff: completed phases, actual verification
+  outcomes, remaining work.
 
 ## Resume note
 
-Status is `planning`; `plan.md` is saved and unimplemented. The catalog location
+Status is `implementing`; Phase 0 of `plan.md` is done (see `progress.md`). The catalog location
 (`./catalog.db`, with `--catalog` / `RPG_LIBRARIAN_CATALOG` overrides) and the other
 plan unknowns are agreed, and Google search will use Serper.dev (`SERPER_API_KEY`;
-confirm the key returns results before Phase 3). Begin at Phase 0. Notes:
+confirm the key returns results before Phase 3). Continue at Phase 1. Notes:
 
 1. **No rubric exists, by decision.** The user has chosen not to define one for this
    item. Proceed without one and do not report numerical quality scores for it.
 2. **Design is fully settled** in `intent.md` and `catalog-schema.md`; neither has open
    questions. Only exact report field names are left to implementation.
-3. **Root `pyproject.toml`** is wired for the uv workspace and ruff; the ty and pytest
-   entries are Phase 0 work because ty errors on a missing root.
+3. **Root `pyproject.toml`** is fully wired for `apps/rpg-librarian` (workspace, ruff,
+   ty, pytest).
