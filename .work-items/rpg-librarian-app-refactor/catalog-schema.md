@@ -164,7 +164,8 @@ one kept file, and the survivor moves up into the line folder on the next
 ### Roots
 
 `root` has `id`, `kind` (`library` or `staging`), `path` (location as mounted, unique),
-an optional `label`, `added_at`, and a nullable `last_scanned_at`. `init` enforces
+an optional `label`, `created_at` (when it was registered), and a nullable
+`last_scanned_at`. `init` enforces
 exactly one `library` root. `add-source` inserts a `staging` row, refuses a path nested
 inside (or containing) an existing root so that no file can belong to two roots, and
 does not scan.
@@ -181,14 +182,14 @@ verify (by hash) before deleting the source.
 
 | Column | Notes |
 |---|---|
-| `id` | |
+| `id` | Integer primary key (the LLM passes file ids to `update_product`). |
 | `root_id`, `relative_path` | Unique together. Filename and parent folder are derived. |
 | `size_bytes`, `mtime` | Filesystem stat, used by the skip rule. `mtime` is whole seconds: SMB timestamp granularity varies, and a sub-second mismatch would force endless rescans. |
 | `mime_type`, `media_type` | As in v1. `media_type` is the `rpg_librarian_tools` enum, stored as tolerant text. |
-| `sha256` | Indexed, not unique. |
+| `sha256` | Indexed, not unique. Nullable, as are `mime_type` and `media_type`, so a row can exist and carry `error` rows before extraction has succeeded. |
 | `disposition` | Default `unfiled`. |
 | `product_id`, `duplicate_of_id`, `missing_since` | As described elsewhere in this document. |
-| `first_seen_at`, `last_seen_at` | `scan` sets `last_seen_at` when it finds the file present; `reorganize` sets it after a move. There is no separate `last_verified`: it would blur the meaning of `last_seen_at`. |
+| `created_at`, `last_seen_at` | `created_at` is when the file was first seen (there is no separate `first_seen_at`). `scan` sets `last_seen_at` when it finds the file present; `reorganize` sets it after a move. There is no separate `last_verified`: it would blur the meaning of `last_seen_at`. |
 
 ### Scan skip rule
 

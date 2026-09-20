@@ -106,7 +106,7 @@ Verification: `uv sync`, `uv run rpg-librarian --help`, `uv run ty check`,
 
 ## Phase 1: catalog model, migrations, `init`, `add-source`
 
-- [ ] SQLModel tables exactly as `catalog-schema.md` lists them: `root`, `product_type`,
+- [x] SQLModel tables exactly as `catalog-schema.md` lists them: `root`, `product_type`,
       `product_line`, `product_line_alias`, `product`, `file`, `file_metadata`,
       `pdf_metadata`, `image_metadata`, `audio_metadata`, `video_metadata`,
       `mesh_metadata`, `file_text`, `file_llm_extraction`, `error`, `review_flag`, and
@@ -117,15 +117,15 @@ Verification: `uv sync`, `uv run rpg-librarian --help`, `uv run ty check`,
       `(product_line_id, name)` on products, unique `(product_line_id, alias)`,
       `keep` requires `product_id` (enforced in the write path, and as a CHECK if
       SQLite allows it cleanly).
-- [ ] Fresh alembic environment under `src/rpg_librarian/alembic/` with one initial
+- [x] Fresh alembic environment under `src/rpg_librarian/alembic/` with one initial
       migration; port the upgrade-on-open pattern from v1 `db.py`.
-- [ ] Repoint `scripts/check_migrations.py` at the new `alembic.ini`.
-- [ ] Path function module: `target_path(file, product, line, type, kept_count)` and
+- [x] Repoint `scripts/check_migrations.py` at the new `alembic.ini`.
+- [x] Path function module: `target_path(file, product, line, type, kept_count)` and
       the name sanitizer (illegal SMB/Windows characters, trailing dots, length).
       Single-file rule counts only `disposition = keep` files of that product.
-- [ ] Seed type list as a code constant; `init` creates the catalog, inserts missing
+- [x] Seed type list as a code constant; `init` creates the catalog, inserts missing
       types idempotently, registers the single `library` root, and refuses a second.
-- [ ] `add-source` inserts a `staging` root, refusing paths nested in or containing an
+- [x] `add-source` inserts a `staging` root, refusing paths nested in or containing an
       existing root; no scan.
 
 Depends on: Phase 0. Outcome: `init` and `add-source` produce a catalog whose schema

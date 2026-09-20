@@ -1917,14 +1917,18 @@ name = "rpg-librarian"
 version = "0.1.0"
 source = { editable = "apps/rpg-librarian" }
 dependencies = [
+    { name = "alembic" },
     { name = "python-dotenv" },
     { name = "rpg-librarian-tools" },
+    { name = "sqlmodel" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", specifier = ">=1.18.5" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "rpg-librarian-tools", editable = "packages/rpg-librarian-tools" },
+    { name = "sqlmodel", specifier = ">=0.0.39" },
 ]
 
 [[package]]

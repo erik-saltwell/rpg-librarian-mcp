@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
+from .commands import add_source, init
 from .config import load_env, resolve_catalog_path
+from .errors import UsageError
+
+Handler = Callable[[argparse.Namespace, Path], int]
 
 _VERBS = {
     "init": "Create the catalog and register the library root.",
@@ -13,6 +18,20 @@ _VERBS = {
     "enrich": "Look up external evidence and extract with an LLM.",
     "reorganize": "Make the share match the catalog.",
     "serve": "Run the MCP server on stdio.",
+}
+
+
+def _not_implemented(args: argparse.Namespace, catalog_path: Path) -> int:
+    print(
+        f"{args.command}: not implemented yet (catalog: {catalog_path})",
+        file=sys.stderr,
+    )
+    return 2
+
+
+_HANDLERS: dict[str, Handler] = {
+    "init": init.run,
+    "add-source": add_source.run,
 }
 
 
@@ -31,17 +50,31 @@ def build_parser() -> argparse.ArgumentParser:
         description="Organize RPG content on a network share.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for name, help_text in _VERBS.items():
-        subparsers.add_parser(name, help=help_text, parents=[common])
+    verbs = {
+        name: subparsers.add_parser(name, help=help_text, parents=[common])
+        for name, help_text in _VERBS.items()
+    }
+    verbs["init"].add_argument(
+        "--library", type=Path, required=True, help="The library root directory."
+    )
+    verbs["add-source"].add_argument(
+        "path", type=Path, help="The staging (dump) directory to register."
+    )
+    verbs["add-source"].add_argument("--label", help="A display name for the root.")
     return parser
 
 
 def main() -> None:
     load_env()
     args = build_parser().parse_args()
-    catalog = resolve_catalog_path(args.catalog)
-    print(f"{args.command}: not implemented yet (catalog: {catalog})", file=sys.stderr)
-    sys.exit(2)
+    catalog_path = resolve_catalog_path(args.catalog)
+    handler = _HANDLERS.get(args.command, _not_implemented)
+    try:
+        code = handler(args, catalog_path)
+    except UsageError as error:
+        print(f"error: {error}", file=sys.stderr)
+        code = 1
+    sys.exit(code)
 
 
 if __name__ == "__main__":

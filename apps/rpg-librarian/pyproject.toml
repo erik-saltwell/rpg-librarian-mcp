@@ -5,8 +5,10 @@ description = "Catalog-driven organizer for RPG content on a network share"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.18.5",
     "python-dotenv>=1.0",
     "rpg-librarian-tools",
+    "sqlmodel>=0.0.39",
 ]
 
 [project.scripts]
