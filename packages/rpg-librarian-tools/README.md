@@ -22,6 +22,9 @@ Public modules:
   perform one authenticated DriveThruRPG request sequence.
 - `rpg_librarian_tools.rpggeek.search(...)` and `get_product(...)` perform one
   RPGGeek request sequence.
+- `rpg_librarian_tools.google.search(query, api_key, num=5)` performs one Google
+  search through Serper.dev and returns the top organic hits (position, title, URL,
+  snippet).
 
 Network operations take explicit credentials and an optional immutable
 `RequestPolicy`. PDF operations use `pages=None` for all pages; otherwise callers

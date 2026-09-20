@@ -6,9 +6,22 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.18.5",
+    "isbnlib>=3.10.14",
+    "litellm>=1.60",
+    "lxml>=6.0",  # trimesh's 3mf loader lazily needs this; not pulled in transitively
+    "mutagen>=1.48.1",
+    "networkx>=3.5",  # trimesh's 3mf/scene-graph loader lazily needs this
+    "pebble>=5.2.1",
+    "pillow>=12.3.0",
+    "pymediainfo>=7.0.1",
+    "pymupdf>=1.28.0",
     "python-dotenv>=1.0",
+    "rich>=13.9",
     "rpg-librarian-tools",
+    "setuptools>=80.0,<82",  # isbnlib.registry does `from pkg_resources import ...`, removed in setuptools 82
     "sqlmodel>=0.0.39",
+    "structlog>=26.1.0",
+    "trimesh>=4.12.2",
 ]
 
 [project.scripts]

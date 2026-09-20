@@ -1918,17 +1918,43 @@ version = "0.1.0"
 source = { editable = "apps/rpg-librarian" }
 dependencies = [
     { name = "alembic" },
+    { name = "isbnlib" },
+    { name = "litellm" },
+    { name = "lxml" },
+    { name = "mutagen" },
+    { name = "networkx" },
+    { name = "pebble" },
+    { name = "pillow" },
+    { name = "pymediainfo" },
+    { name = "pymupdf" },
     { name = "python-dotenv" },
+    { name = "rich" },
     { name = "rpg-librarian-tools" },
+    { name = "setuptools" },
     { name = "sqlmodel" },
+    { name = "structlog" },
+    { name = "trimesh" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.18.5" },
+    { name = "isbnlib", specifier = ">=3.10.14" },
+    { name = "litellm", specifier = ">=1.60" },
+    { name = "lxml", specifier = ">=6.0" },
+    { name = "mutagen", specifier = ">=1.48.1" },
+    { name = "networkx", specifier = ">=3.5" },
+    { name = "pebble", specifier = ">=5.2.1" },
+    { name = "pillow", specifier = ">=12.3.0" },
+    { name = "pymediainfo", specifier = ">=7.0.1" },
+    { name = "pymupdf", specifier = ">=1.28.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "rich", specifier = ">=13.9" },
     { name = "rpg-librarian-tools", editable = "packages/rpg-librarian-tools" },
+    { name = "setuptools", specifier = ">=80.0,<82" },
     { name = "sqlmodel", specifier = ">=0.0.39" },
+    { name = "structlog", specifier = ">=26.1.0" },
+    { name = "trimesh", specifier = ">=4.12.2" },
 ]
 
 [[package]]

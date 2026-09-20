@@ -138,27 +138,27 @@ scripts/check_migrations.py` passes; hooks pass on commit.
 
 ## Phase 2: `scan`
 
-- [ ] Walk one root (or all roots by default), skipping `.trash/` and v1's filtered
+- [x] Walk one root (or all roots by default), skipping `.trash/` and v1's filtered
       names; record `relative_path`, `size_bytes`, whole-second `mtime`.
-- [ ] Skip rule per the schema doc: unchanged size+mtime → update `last_seen_at`,
+- [x] Skip rule per the schema doc: unchanged size+mtime → update `last_seen_at`,
       clear `missing_since`, done. Otherwise copy local → `inspect_file` → media
       extractor → PDF text sample (first 5 + last 2 pages, OCR only where no text
       layer) → barcode scan (first 2 + last page) → `find_publication_identifiers`
       over the sample → delete local copy. Replace metadata/text rows; if the hash
       changed, reset disposition to `unfiled` and clear `product_id` and
       `duplicate_of_id`.
-- [ ] Port the extractors and the worker pool; run mesh and PDF work through the
+- [x] Port the extractors and the worker pool; run mesh and PDF work through the
       isolated pool as v1 does.
-- [ ] Hash join after each file: match against a row with `missing_since` set → move
+- [x] Hash join after each file: match against a row with `missing_since` set → move
       (update path, clear `missing_since`, keep product and disposition); match
       against a present row → set `duplicate_of_id` and `disposition = duplicate`,
       library copy winning, earlier-scanned winning within staging.
-- [ ] Missing detection: rows under a reachable root whose path is absent get
+- [x] Missing detection: rows under a reachable root whose path is absent get
       `missing_since`; an unreachable root is skipped with a warning and nothing
       marked.
-- [ ] `error` rows per `(file_id, stage)`, overwritten on retry; per-file wide-event
+- [x] `error` rows per `(file_id, stage)`, overwritten on retry; per-file wide-event
       logs via the ported observability module; rich progress on the CLI.
-- [ ] `--force` to bypass the skip rule for a root; `clear-metadata`-style reset is
+- [x] `--force` to bypass the skip rule for a root; `clear-metadata`-style reset is
       covered by `--force`, so no separate verb.
 
 Depends on: Phase 1. Outcome: a scanned dump is fully described in the catalog, with
@@ -173,30 +173,30 @@ check the local temp directory is empty afterwards.
 
 ## Phase 3: `enrich`
 
-- [ ] Settle the evidence tables from the tools result types and the v1 ISBN result
+- [x] Settle the evidence tables from the tools result types and the v1 ISBN result
       and add the migration.
-- [ ] Google search evidence: a stateless `rpg_librarian_tools.google.search(query,
+- [x] Google search evidence: a stateless `rpg_librarian_tools.google.search(query,
       api_key, num=5, policy)` client in the tools package, calling Serper (one
       request sequence, explicit credentials, immutable result objects, documented in
       that package's README) and returning title, URL, and snippet per hit from
       Serper's `organic` list.
-- [ ] `google_search_result` table, one row per file: `query`, `results` (JSON list of
+- [x] `google_search_result` table, one row per file: `query`, `results` (JSON list of
       title/URL/snippet, top 5), `fetched_at`. A file with no hits still gets a row
       recording the query, so it is not re-queried.
-- [ ] Query construction, deterministic and recorded: prefer an identified ISBN, then
+- [x] Query construction, deterministic and recorded: prefer an identified ISBN, then
       the embedded title, then the filename stem with its parent folder name; strip
       extension and separators. No LLM in query building.
-- [ ] Credential `SERPER_API_KEY` from `.env`; a missing key skips the Google source
+- [x] Credential `SERPER_API_KEY` from `.env`; a missing key skips the Google source
       with one warning instead of failing the run. Honour `RequestPolicy`, and on an
       out-of-credits or rate-limit response stop the source cleanly, recording an
       `error` row, so a re-run resumes where it left off.
-- [ ] DriveThruRPG, RPGGeek, and ISBN lookups keyed from `file_text` identifiers and
+- [x] DriveThruRPG, RPGGeek, and ISBN lookups keyed from `file_text` identifiers and
       filename/embedded title, one row per file per source, with query and fetch
       time recorded; honour `RequestPolicy` and record `error` rows on failure.
-- [ ] LLM extraction into `file_llm_extraction` (`description`, `possible_system`) from
+- [x] LLM extraction into `file_llm_extraction` (`description`, `possible_system`) from
       the text sample, porting `pdf_judgment.py`; a file needs enrichment when it has
       `file_text` and no `file_llm_extraction` row.
-- [ ] `--source` filter to run one source (`dtrpg`, `rpggeek`, `isbn`, `google`, `llm`), `--limit` for bounded runs, and
+- [x] `--source` filter to run one source (`dtrpg`, `rpggeek`, `isbn`, `google`, `llm`), `--limit` for bounded runs, and
       resumability by simply re-running.
 
 Depends on: Phase 2. Outcome: candidate evidence exists for every scannable file

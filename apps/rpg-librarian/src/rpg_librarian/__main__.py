@@ -5,9 +5,11 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from .commands import add_source, init
+from .commands import add_source, enrich, init, scan
 from .config import load_env, resolve_catalog_path
+from .enrichment.registry import SOURCES
 from .errors import UsageError
+from .observability import CallTracker, configure_wide_event_logs
 
 Handler = Callable[[argparse.Namespace, Path], int]
 
@@ -32,6 +34,8 @@ def _not_implemented(args: argparse.Namespace, catalog_path: Path) -> int:
 _HANDLERS: dict[str, Handler] = {
     "init": init.run,
     "add-source": add_source.run,
+    "scan": scan.run,
+    "enrich": enrich.run,
 }
 
 
@@ -61,6 +65,28 @@ def build_parser() -> argparse.ArgumentParser:
         "path", type=Path, help="The staging (dump) directory to register."
     )
     verbs["add-source"].add_argument("--label", help="A display name for the root.")
+    verbs["enrich"].add_argument(
+        "--source",
+        action="append",
+        choices=list(SOURCES),
+        help="Run only this source (repeatable). Default: all.",
+    )
+    verbs["enrich"].add_argument(
+        "--limit", type=int, help="At most this many files per source."
+    )
+    verbs["enrich"].add_argument(
+        "--force",
+        action="store_true",
+        help="Refetch files a source has already covered.",
+    )
+    verbs["scan"].add_argument(
+        "--root", type=Path, help="Scan only this registered root (default: all)."
+    )
+    verbs["scan"].add_argument(
+        "--force",
+        action="store_true",
+        help="Re-extract every file, ignoring the size+mtime skip rule.",
+    )
     return parser
 
 
@@ -69,8 +95,14 @@ def main() -> None:
     args = build_parser().parse_args()
     catalog_path = resolve_catalog_path(args.catalog)
     handler = _HANDLERS.get(args.command, _not_implemented)
+    if catalog_path.exists():
+        configure_wide_event_logs(catalog_path)
     try:
-        code = handler(args, catalog_path)
+        with CallTracker(args.command, transport="cli") as tracker:
+            tracker.fields["arguments"] = {
+                k: str(v) for k, v in vars(args).items() if k != "command"
+            }
+            code = handler(args, catalog_path)
     except UsageError as error:
         print(f"error: {error}", file=sys.stderr)
         code = 1

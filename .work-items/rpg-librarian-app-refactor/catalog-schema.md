@@ -42,8 +42,7 @@ into it, and are kept here as a record of where the schema design changed it.
 | per-media metadata tables (`pdf_`, `image_`, `audio_`, `video_`, `mesh_metadata`) and `file_metadata` | file of that media type; `file_metadata` for any file | `scan` |
 | `file_text` | file (PDFs) | `scan` |
 | `file_llm_extraction` | file | `enrich` |
-| other per-source evidence tables | file, per source (DriveThruRPG, RPGGeek, ISBN) | `enrich` |
-| `google_search_result` | file | `enrich` |
+| `dtrpg_result`, `rpggeek_result`, `isbn_result`, `google_search_result` | file, per source | `enrich` |
 | `error` | file and stage | `scan`, `enrich` |
 | `review_flag` | LLM deferral on a file | `update_product` / session |
 
@@ -155,8 +154,9 @@ one kept file, and the survivor moves up into the line folder on the next
   a staging file matching a library file is the duplicate. If both are in staging, the
   earlier-scanned wins. `scan` sets `duplicate_of_id` and `disposition = duplicate`
   together.
-- The file row has a nullable `missing_since`. When `scan` finds a row's path absent it
-  sets `missing_since`. A later hash match against a missing row is a **move**: the row's
+- The file row has a nullable `missing_since`. `scan` lists every reachable root and
+  marks absent paths missing *before* it processes any file, so a file moved by hand
+  (within a root or across roots) meets its old row already marked missing. A later hash match against a missing row is a **move**: the row's
   path is updated, `missing_since` is cleared, and product and disposition are kept. A
   match against a row whose path still exists is a true duplicate. If a root is
   unreachable (share offline), `scan` does not mark its files missing.
@@ -171,8 +171,8 @@ inside (or containing) an existing root so that no file can belong to two roots,
 does not scan.
 
 **`.trash/` lives under the library root**, holding `duplicates/`, `superseded/`, and
-`discarded/`. There is one place to empty by hand. Trashed files keep their rows, so
-they stay in the hash join: a fresh copy of a discarded or superseded file in a later
+`discarded/`. There is one place to empty by hand. `scan` neither walks `.trash/` nor marks rows
+under it missing, but trashed files keep their rows, so they stay in the hash join: a fresh copy of a discarded or superseded file in a later
 dump is flagged `duplicate` rather than re-raised as a new question (the property
 `intent.md` requires of superseding). Trashing a file from a staging root crosses
 roots: a rename if both are on the same volume, otherwise a copy that `reorganize` must
@@ -236,10 +236,30 @@ already covers naming variants.
 
 `enrich` runs before any product exists, because grouping is the LLM's judgment and
 happens afterward, so evidence has nothing else to attach to. Each source gets its own
-table with one row per file, and each records provenance (which query, when fetched).
-Product-level facts (publisher, year, artists, description) are written onto the
-product by the LLM using that evidence. A shared polymorphic evidence table was
-rejected: it gives up foreign-key integrity for a case that does not arise.
+table with one row per file (`file_id` is the primary key), and every table has the same
+three columns after the key: `query` (what was asked), `results` (a JSON list of what
+came back), and `fetched_at`. The tables are `dtrpg_result` (top five products: id,
+title, description, publisher, authors, game system), `rpggeek_result` (up to five
+candidates; the first also carries description, systems, categories, designers, and
+publishers), `isbn_result` (at most one record, with the provider that found it), and
+`google_search_result` (below). A query that finds nothing still writes a row with
+empty `results`, so the file is not asked again; a failure writes an `error` row and no
+evidence row, so it is retried. Product-level facts (publisher, year, artists,
+description) are written onto the product by the LLM using that evidence. A shared
+polymorphic evidence table was rejected: it gives up foreign-key integrity for a case
+that does not arise.
+
+Evidence is dropped when a file's content changes (a new hash), and kept across a
+rescan that finds the same bytes.
+
+**Catalog searches use a query ladder.** DriveThruRPG and RPGGeek match on *every*
+word, so a query padded with an author or a generic folder ("Fasano Blood And Bone Core
+Rules") finds nothing where the bare product name ("Blood and Bone") finds it. Both
+sources therefore try, in order and stopping at the first that returns results: the
+embedded title, the filename stem, then each ancestor folder from the top down, at most
+four requests per file. RPGGeek tries an identified ISBN first. The query that produced
+the results (or the last one tried) is stored. Google, which tolerates extra words,
+keeps the single rule below.
 
 ### Google search results
 
@@ -277,7 +297,8 @@ v1's single `PdfContents` table is split in two:
 This matches the intent's separate `scan` and `enrich` verbs, which fail differently:
 a failed LLM call leaves no second row, and the scan output is never in doubt. "Needs
 enrichment" becomes the absence of a `file_llm_extraction` row for a file that has a
-`file_text` row.
+`file_text` row. A file whose sampled text is empty gets a row with null fields without
+an LLM call, recording that it was considered.
 
 ### Errors and review flags
 

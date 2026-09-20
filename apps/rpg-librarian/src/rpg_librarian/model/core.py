@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
-from sqlalchemy import TypeDecorator
+from sqlalchemy import JSON, TypeDecorator
 from sqlmodel import DateTime, Field, SQLModel, String
 
 from rpg_librarian_tools.files import MediaType
@@ -133,3 +134,19 @@ class FileMetadataBase(SQLModel):
         sa_type=UTCDateTime,
         sa_column_kwargs={"onupdate": utc_now},
     )
+
+
+class EvidenceBase(FileMetadataBase):
+    """Base for per-source evidence tables: one row per file, per source.
+
+    Evidence is candidate signal for the LLM, never an asserted identification. It
+    records its provenance: the `query` that produced it and when it was fetched.
+    A query that found nothing still gets a row (empty `results`), so the file is
+    not queried again.
+    """
+
+    query: str = Field(nullable=False)
+    results: list[dict[str, Any]] = Field(
+        default_factory=list, sa_type=JSON, nullable=False
+    )
+    fetched_at: datetime = Field(default_factory=utc_now, sa_type=UTCDateTime)

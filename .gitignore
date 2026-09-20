@@ -33,3 +33,6 @@ wheels/
 
 # rpg-librarian app: working catalog database (personal data)
 catalog.db
+
+# Local manual-testing workspace for the rpg-librarian app
+.test/
