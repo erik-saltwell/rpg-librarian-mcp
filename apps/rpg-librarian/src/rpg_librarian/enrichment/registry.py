@@ -4,8 +4,8 @@ from .base import Source
 from .dtrpg import DtrpgSource
 from .google import GoogleSource
 from .isbn import IsbnSource
-from .llm import LlmSource
 from .rpggeek import RpggeekSource
+from .text_analysis import TextAnalysisSource
 
 # Run order: cheap identifiers first, the LLM last.
 SOURCES: dict[str, Source] = {
@@ -15,6 +15,6 @@ SOURCES: dict[str, Source] = {
         DtrpgSource(),
         RpggeekSource(),
         GoogleSource(),
-        LlmSource(),
+        TextAnalysisSource(),
     )
 }

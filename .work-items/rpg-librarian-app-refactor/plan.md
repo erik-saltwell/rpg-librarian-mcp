@@ -109,7 +109,7 @@ Verification: `uv sync`, `uv run rpg-librarian --help`, `uv run ty check`,
 - [x] SQLModel tables exactly as `catalog-schema.md` lists them: `root`, `product_type`,
       `product_line`, `product_line_alias`, `product`, `file`, `file_metadata`,
       `pdf_metadata`, `image_metadata`, `audio_metadata`, `video_metadata`,
-      `mesh_metadata`, `file_text`, `file_llm_extraction`, `error`, `review_flag`, and
+      `mesh_metadata`, `file_text`, `file_text_analysis`, `error`, `review_flag`, and
       one evidence table per enrichment source (DriveThruRPG, RPGGeek, ISBN,
       `google_search_result`; columns settled in Phase 3, so those tables and their
       migration land there). Constraints: unique `(root_id, relative_path)`,
@@ -193,10 +193,10 @@ check the local temp directory is empty afterwards.
 - [x] DriveThruRPG, RPGGeek, and ISBN lookups keyed from `file_text` identifiers and
       filename/embedded title, one row per file per source, with query and fetch
       time recorded; honour `RequestPolicy` and record `error` rows on failure.
-- [x] LLM extraction into `file_llm_extraction` (`description`, `possible_system`) from
+- [x] Text analysis (a model reads the stored sample) into `file_text_analysis` (`description`, `possible_system`) from
       the text sample, porting `pdf_judgment.py`; a file needs enrichment when it has
-      `file_text` and no `file_llm_extraction` row.
-- [x] `--source` filter to run one source (`dtrpg`, `rpggeek`, `isbn`, `google`, `llm`), `--limit` for bounded runs, and
+      `file_text` and no `file_text_analysis` row.
+- [x] `--source` filter to run one source (`dtrpg`, `rpggeek`, `isbn`, `google`, `text_analysis`), `--limit` for bounded runs, and
       resumability by simply re-running.
 
 Depends on: Phase 2. Outcome: candidate evidence exists for every scannable file
@@ -210,8 +210,8 @@ warning, and that no `product` row exists.
 
 ## Phase 4: MCP server, `update_product`, reads
 
-- [ ] FastMCP stdio server (`rpg-librarian serve`) with the logging middleware.
-- [ ] `update_product` exactly per the schema doc's signature: files by id; LLM
+- [x] FastMCP stdio server (`rpg-librarian serve`) with the logging middleware.
+- [x] `update_product` exactly per the schema doc's signature: files by id; LLM
       dispositions `keep` / `superseded` / `discard` / `unfiled`; line and type
       resolution through names and aliases (case- and whitespace-insensitive);
       rejection with nearest matches unless `create_line` / `create_type`; product
@@ -220,18 +220,22 @@ warning, and that no `product` row exists.
       `note` on a later real call; one transaction, all-or-nothing; response with
       resolved coordinates, created entities, warnings, and the computed target
       folder.
-- [ ] Read tools: `report_file`, `report_product`, `report_line`, schema discovery
-      with the named example queries (unfiled by folder, needs enrichment, open
-      review flags), and the ported read-only SQL tool. Every report carries
-      `pending_changes` computed by the path function with a per-disposition
-      breakdown.
-- [ ] CLI mirrors of `update_product` and the three reports so the surface can be
-      exercised without an MCP client.
+- [x] Read tools, per the schema doc's "Reads": `report_file` (with the text-analysis
+      hint, never the sample text), `report_product`, `report_line`, `list_unfiled`
+      (folders with counts, then one folder's files; excludes duplicates, missing
+      files, and files with an open review flag), `list_product_types`,
+      `list_product_lines` (with alias `search`), schema discovery with the named
+      example queries (needs enrichment, open review flags), and the ported read-only
+      SQL tool. Every report carries `pending_changes` computed by the path function
+      with a per-disposition breakdown.
+- [x] CLI mirrors of `update_product`, the three reports, and the three list tools so
+      the surface can be exercised without an MCP client.
 
 Depends on: Phase 3 (reports show evidence), Phase 1 (path function). Outcome: an
 LLM session can file a dump entirely in the database.
 
-Verification: from the CLI mirror, file a folder as one product with `keep`, confirm
+Verification: from the CLI mirror, list unfiled folders and one folder's files, file
+that folder as one product with `keep`, confirm
 rejection of an unknown line and success with `create_line`, confirm `keep` without
 coordinates fails and writes nothing, confirm a `review_flag` then a later `keep`
 resolves the flag, and confirm `pending_changes` counts the kept files. Then start

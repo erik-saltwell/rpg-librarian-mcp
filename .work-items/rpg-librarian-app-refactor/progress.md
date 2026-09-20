@@ -1,7 +1,8 @@
 # Progress
 
-Current handoff for [plan.md](plan.md). Status: `implementing`. Phases 0 to 3 are
-done; continue at Phase 4 (the MCP server and `update_product`). **Manual-testing checkpoint 1 is now:** run `init`,
+Current handoff for [plan.md](plan.md). Status: `implementing`. Phases 0 to 4 are
+done; continue at Phase 5 (`reorganize`). **Manual-testing checkpoint 2 is now:** register
+the server with Claude Code and file a few products (see the app README). **Manual-testing checkpoint 1 is now:** run `init`,
 `add-source`, and `scan` against one real dump on the share before Phase 3 starts.
 
 ## Completed
@@ -28,7 +29,7 @@ done; continue at Phase 4 (the MCP server and `update_product`). **Manual-testin
 - `model/`: one file per class, matching v1's layout. Tables `root`, `product_type`,
   `product_line`, `product_line_alias`, `product`, `file`, `file_metadata`,
   `pdf_metadata`, `image_metadata`, `audio_metadata`, `video_metadata`, `mesh_metadata`,
-  `file_text`, `file_llm_extraction`, `error`, `review_flag`. Integer primary keys.
+  `file_text`, `file_text_analysis`, `error`, `review_flag`. Integer primary keys.
   `core.py` holds the UTC datetime type, an enum-as-text type (one subclass per enum,
   with `MediaType` tolerant of unknown stored values), and the two base classes.
   Constraints: unique `(root_id, relative_path)`, `keep` requires `product_id` (a CHECK),
@@ -80,8 +81,8 @@ done; continue at Phase 4 (the MCP server and `update_product`). **Manual-testin
 - `enrichment/`: one module per source behind a small `Source` protocol (`name`, `stage`,
   `table`, `unavailable_reason`, `wants`, `fetch`), `queries.py` (file context, name and
   Google queries, the query ladder), `registry.py` (run order: isbn, dtrpg, rpggeek,
-  google, llm), `isbn_lookup.py` (ported from v1; now records which provider found the
-  record), `llm.py` (v1's judgment prompt as a plain format string, model from
+  google, text_analysis), `isbn_lookup.py` (ported from v1; now records which provider found the
+  record), `text_analysis.py` (v1's judgment prompt as a plain format string, model from
   `RPG_LIBRARIAN_LLM_MODEL`, default `gpt-5.6-luna`, litellm imported lazily).
 - `commands/enrich.py` and `enrich [--source S]... [--limit N] [--force]`. Eligible files:
   not `duplicate`, not missing, and with no row yet for that source. Per file: its own
@@ -95,6 +96,34 @@ done; continue at Phase 4 (the MCP server and `update_product`). **Manual-testin
 - Dependencies added: litellm, isbnlib, and setuptools<82 (isbnlib imports
   `pkg_resources`).
 
+**Rename after Phase 3: the LLM enrichment is "text analysis".** The table, class,
+stage, and `--source` value now name where the data comes from (the stored text sample)
+rather than how it is produced: `file_llm_extraction` → `file_text_analysis`,
+`FileLlmExtraction` → `FileTextAnalysis`, stage and source `llm` → `text_analysis`,
+`enrichment/llm.py` → `enrichment/text_analysis.py`. `RPG_LIBRARIAN_LLM_MODEL` keeps its
+name because it does select a model. Migration `0003` renames the table and relabels
+existing `llm` error rows; checked on a populated copy of the test catalog (rows survive,
+stage relabelled, downgrade restores the old names) and by `check_migrations.py`.
+
+**Phase 4: MCP server, `update_product`, reads** (done, uncommitted)
+
+- `services/`: `update_product.py`, `reports.py`, `lists.py`, `schema.py` (describe + the
+  ported read-only SQL guard), `pending.py`, `names.py` (case- and whitespace-insensitive
+  matching, nearest-name suggestions, near-match warnings), `serialize.py`. Pure functions
+  over a session; both front doors call them.
+- `server/`: FastMCP stdio server (`tools.py` with LLM-facing tool descriptions,
+  `middleware.py` logging every call to `calls.log` with transport `mcp`, workflow
+  `INSTRUCTIONS` in `__init__.py`). It migrates the catalog once at startup and opens
+  sessions with `migrate=False` per call. The banner and PyPI update check are off.
+- Nine tools: `list_unfiled`, `list_product_types`, `list_product_lines`, `report_file`,
+  `report_product`, `report_line`, `describe_schema`, `query`, `update_product`.
+- CLI mirrors (`commands/tools.py`): `update-product`, `report-file`, `report-product`,
+  `report-line`, `list-unfiled`, `list-types`, `list-lines`, printing JSON; errors go to
+  stderr with exit 1. `serve` is the verb for the server and is not wrapped in a call
+  tracker.
+- `paths.py`: trash buckets and `desired_trash_path`, shared with Phase 5.
+- Dependency added: fastmcp.
+
 ## Deviations from the plan and schema doc
 
 - **Nullable `sha256`, `mime_type`, `media_type` on `file`**, so a file row (and its
@@ -103,7 +132,7 @@ done; continue at Phase 4 (the MCP server and `update_product`). **Manual-testin
   already provides it. Recorded in `catalog-schema.md`.
 - **`product.year` is text** (as in v1), since a year range or a bare year both occur.
 - **Stage names** for `error` rows: `scan`, `metadata`, `text`, `dtrpg`, `rpggeek`,
-  `isbn`, `google`, `llm`, `reorganize`.
+  `isbn`, `google`, `text_analysis`, `reorganize`.
 - **Both apps cannot be imported in one process**: v1 and the new app share SQLModel's
   global metadata and both define `product` and `error`. Nothing imports both; v1 goes
   in Phase 6.
@@ -122,8 +151,12 @@ done; continue at Phase 4 (the MCP server and `update_product`). **Manual-testin
   rule. Recorded in `catalog-schema.md`.
 - **The RPGGeek token is required**, not optional: RPGGeek now rejects unauthenticated
   calls, so the source is skipped without `RPGGEEK_BEARER_TOKEN`.
+- **Phase 4 rules the docs did not settle** (now in `catalog-schema.md`): `unfiled` clears
+  the product link; `discard`/`unfiled` reject coordinates; a review flag leaves the
+  disposition unchanged; duplicates and missing files cannot be filed; types get the
+  same folder-collision check; a 500-file cap per call; the trash path scheme.
 - **`--force` on `enrich`** (not in the plan) refetches files a source already covers.
-- **The LLM source writes an empty row for a file with no sampled text**, without calling
+- **The text-analysis source writes an empty row for a file with no sampled text**, without calling
   the model, so it is not retried every run.
 - **Changed content at a path** also resets any rows that were `duplicate` of it.
 - **No separate `clear-metadata` verb**: `--force` covers it, as the plan proposed.
@@ -202,7 +235,7 @@ your `.env` keys:
   ladder, 7 of 7 PDFs returned results; the winning query was the top-level folder
   (`Blood and Bone`, `Daring Comics Role Playing Game`) and the right product (Arcana
   Games, Daring Entertainment) appeared in the results.
-- **llm:** 2 files, 0 errors. Both got `possible_system` and a sensible description
+- **text analysis** (then called `llm`)**:** 2 files, 0 errors. Both got `possible_system` and a sensible description
   (`Blood and Bone`, and a summary of the Red Road adventure).
 - **isbn:** with your `GOOGLE_BOOKS_API_KEY` set, Google Books returned 403 and the source
   stopped after one file with the error recorded (v1's stop-on-Google-Books-unusable
@@ -229,9 +262,57 @@ your `.env` keys:
 - `uv run ruff check`, `ruff format --check`, `ty check`, `check_migrations.py`, and the
   tools package's existing tests (3): pass.
 
+### Phase 4 verification
+
+Against copies of your `.test` catalog (yours was not modified):
+
+- **Worklist:** on the real 55 files across three dumps, `list_unfiled` returned the full
+  folder tree with direct and subtree counts; a folder view returned its own files (with
+  page counts and hints) plus subfolders; `recursive` returned the whole subtree; a folder
+  present under several roots asked for `root_id`.
+- **`update_product` rule matrix (in-process, ~45 cases):** every rejection left the
+  database exactly unchanged (a snapshot of row counts and every file's disposition and
+  product was compared before and after each call): keep without coordinates, empty ids,
+  partial coordinates, `duplicate` as a disposition, coordinates with discard, a flag with
+  keep, neither disposition nor flag, aliases without coordinates, an unknown metadata
+  field, an unknown file id, an unknown type (suggests the closest), an unknown line,
+  an alias owned by another line, sanitized-folder collisions for types, lines, and
+  products, an automatic duplicate, a missing file, both together, and 501 files.
+  Successes: create line + product with aliases and metadata; reuse by other case and
+  spacing; resolve by alias; the single-file rule (target folder gains a product folder
+  at the second kept file); a near-match product warning; `create_type` implying a new
+  line; flag open, update-in-place, exclusion from the worklist, `include_flagged`,
+  auto-resolution with a note; superseded with and without coordinates; discard; and
+  `unfiled` clearing the link.
+- **Reports:** `report_file`, `report_product`, and `report_line` matched the database;
+  `report_file` carries the hint and identifiers and provably contains no sample text.
+- **`pending_changes`:** counts kept files not at their target; drops when a file sits at
+  its computed target; a superseded file in the right trash bucket is settled and in the
+  wrong bucket is pending; `desired_trash_path` is stable under re-application.
+- **Real MCP over stdio** (FastMCP client against `rpg-librarian serve`): 9 tools with
+  correct schemas (the `disposition` enum, `file_ids` required); every tool called; errors
+  arrive as tool errors with the same messages; `query` rejected `delete`, `drop`,
+  `pragma`, a second statement, and a `WITH ... DELETE` (refused by SQLite itself), and
+  capped 2,000 rows at 500 with `truncated`; every call was logged to `calls.log` with
+  transport `mcp`; the server exits within seconds of the client disconnecting; its stderr
+  has no banner and no network update check.
+- **CLI mirrors:** exit 0 with JSON, exit 1 with a message on stderr; files filed through
+  `update-product` no longer appear in `list-unfiled`.
+- `uv run ruff check`, `ruff format`, `ty check`: pass.
+
+Not exercised: a real LLM session driving the tools (that is manual checkpoint 2), and
+large catalogs (the report and worklist queries load whole tables into Python).
+
 ## Remaining
 
-Phases 4 to 6 in `plan.md`. **Before manual-testing checkpoint 2:** get a fresh RPGGeek
+Phases 5 and 6 in `plan.md`. **Checkpoint 2 first:** a short real session. Note that your
+Claude Code config may already register a server named `rpg-librarian` (the v1 server); use
+a different name (the README uses `rpg-librarian-app`) until v1 is removed in Phase 6. **Phase 4's scope changed by agreement after Phase 3:** the
+MCP surface is now nine tools, not six. Added: `list_unfiled` (the worklist; excludes
+duplicates, missing files, and files with an open review flag), `list_product_types`, and
+`list_product_lines` (with an alias `search`). Reports return the text-analysis hint but
+never the sampled page text. Recorded in `intent.md`, `catalog-schema.md` ("Reads"), and
+`plan.md` (Phase 4). **Before manual-testing checkpoint 2:** get a fresh RPGGeek
 bearer token, a working Google Books key (or unset it), and a Serper key, then run
 `enrich` on the real catalog; those three sources are unverified against real results. Before Phase 3, confirm the Serper API key returns
 results in a manual request.

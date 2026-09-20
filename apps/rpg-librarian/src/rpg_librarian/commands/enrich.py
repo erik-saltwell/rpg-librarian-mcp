@@ -28,9 +28,9 @@ from ..model import (
     Disposition,
     EvidenceBase,
     File,
-    FileLlmExtraction,
     FileMetadata,
     FileText,
+    FileTextAnalysis,
     Root,
 )
 from ..model.core import FileMetadataBase
@@ -83,7 +83,7 @@ def _eligible(session: Session, source: Source, force: bool) -> list[FileContext
 def _has_results(row: FileMetadataBase) -> bool:
     if isinstance(row, EvidenceBase):
         return bool(row.results)
-    if isinstance(row, FileLlmExtraction):
+    if isinstance(row, FileTextAnalysis):
         return bool(row.description or row.possible_system)
     return True
 

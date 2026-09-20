@@ -42,9 +42,9 @@ from ..model import (
     DtrpgResult,
     Error,
     File,
-    FileLlmExtraction,
     FileMetadata,
     FileText,
+    FileTextAnalysis,
     GoogleSearchResult,
     ImageMetadata,
     IsbnResult,
@@ -373,7 +373,7 @@ class Scanner:
             clear_error(self.session, file.id, stage)
 
     def _clear_scan_rows(self, file: File) -> None:
-        for table in (*_SCAN_TABLES, FileLlmExtraction):
+        for table in (*_SCAN_TABLES, FileTextAnalysis):
             row = self.session.get(table, file.id)
             if row is not None:
                 self.session.delete(row)

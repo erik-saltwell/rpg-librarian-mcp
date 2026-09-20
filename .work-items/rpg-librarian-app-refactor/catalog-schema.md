@@ -41,7 +41,7 @@ into it, and are kept here as a record of where the schema design changed it.
 | `file` | physical file occurrence on the share | `scan`, `update_product` |
 | per-media metadata tables (`pdf_`, `image_`, `audio_`, `video_`, `mesh_metadata`) and `file_metadata` | file of that media type; `file_metadata` for any file | `scan` |
 | `file_text` | file (PDFs) | `scan` |
-| `file_llm_extraction` | file | `enrich` |
+| `file_text_analysis` | file | `enrich` |
 | `dtrpg_result`, `rpggeek_result`, `isbn_result`, `google_search_result` | file, per source | `enrich` |
 | `error` | file and stage | `scan`, `enrich` |
 | `review_flag` | LLM deferral on a file | `update_product` / session |
@@ -91,8 +91,8 @@ rejection at write time stops "D&D 5e" from silently becoming a second line befo
 a typo would create a stray sibling folder; it therefore needs its own deliberate flag.
 Products are far more numerous and a wrong one is cheap to correct in the database, so
 they warn rather than block. The LLM does not need the full line list injected into its
-prompt: it can query the list at session start, and the rejection response supplies
-suggestions.
+prompt: it can call `list_product_types` and `list_product_lines` at session start, and
+the rejection response supplies suggestions.
 
 `reorganize --dry-run` should also list any type folder that does not yet exist on the
 share as a "new top-level folder" (agreed as a second safety net). `reorganize` is a
@@ -104,8 +104,7 @@ dry-run listing is read by the user at the terminal, not by the LLM.
 The parent folder of a file is derivable from `(root_id, relative_path)`, so it has no
 column of its own. Groupings are never asserted by the schema: no `group` table or
 column exists, and `scan` does not propose one (see "Folder structure as evidence" in
-`intent.md`). The LLM finds folder-level batches by querying unfiled files grouped by
-parent folder, and records its own judgment through `update_product`, which accepts
+`intent.md`). The LLM finds folder-level batches through `list_unfiled`, and records its own judgment through `update_product`, which accepts
 many files per call.
 
 ### Product columns
@@ -147,6 +146,16 @@ with `disposition = keep` and that `product_id` count**, because only they occup
 product folder. Consequence: superseding one of a product's two kept files drops it to
 one kept file, and the survivor moves up into the line folder on the next
 `reorganize`.
+
+### Trash destinations
+
+A non-kept file's destination is `.trash/<bucket>/<root id>-<root folder name>/<original
+relative path>`, with buckets `duplicates`, `superseded`, and `discarded`. The original
+path is preserved so nothing collides, behind the root component so two dumps holding the
+same relative path stay apart. A file already inside `.trash/` only swaps its bucket, so
+the location is stable: applying the function to its own result changes nothing, and a
+file in the right bucket is never pending. `pending_changes` and `reorganize` both use
+`desired_trash_path`.
 
 ### Duplicates and moved files
 
@@ -292,11 +301,11 @@ v1's single `PdfContents` table is split in two:
 | Table | Holds | Written by |
 |---|---|---|
 | `file_text` | `barcode`, `isbn`, `issn`, page-keyed sample text | `scan` |
-| `file_llm_extraction` | `description`, `possible_system` | `enrich` |
+| `file_text_analysis` | `description`, `possible_system` | `enrich` |
 
 This matches the intent's separate `scan` and `enrich` verbs, which fail differently:
 a failed LLM call leaves no second row, and the scan output is never in doubt. "Needs
-enrichment" becomes the absence of a `file_llm_extraction` row for a file that has a
+enrichment" becomes the absence of a `file_text_analysis` row for a file that has a
 `file_text` row. A file whose sampled text is empty gets a row with null fields without
 an LLM call, recording that it was considered.
 
@@ -343,24 +352,47 @@ update_product(
 - **All-or-nothing:** one call is one transaction. If any file is invalid nothing is
   written, and the response names the failing file and the reason. Partial success
   would leave the LLM guessing what landed.
+- **Rules settled while building it:** `unfiled` clears the product link; `discard` and
+  `unfiled` take no coordinates; a review flag leaves the file's disposition unchanged
+  (and, like coordinates, cannot be combined with a disposition); an automatic
+  `duplicate` or a file missing from the share cannot be filed (the error names the
+  original, or says to rescan); a type is checked for sanitized-folder collisions like
+  lines and products; at most 500 files per call.
 - **Returns** the resolved product, line, and type; which entities were created; any
   near-match warnings; and the folder the product would be filed in, computed by the
   path function so the LLM sees the outcome without a separate read.
 
 ### Reads
 
-- `report_file`, `report_product`, and `report_line` each return a structured summary.
-  `report_file` includes folder-relative context, metadata, the text sample, evidence,
-  errors, and any review flag. `report_product` lists its files with dispositions.
-  `report_line` lists its products.
+Eight read tools. Names and returned fields are working names; exact response shapes
+are settled at implementation time.
+
+- **`report_file`, `report_product`, `report_line`** each return a structured summary.
+  `report_file` includes folder-relative context, embedded and per-media metadata, the
+  **text-analysis hint** (`description` and `possible_system`, or null when the file has
+  none), all evidence, any error rows, and any open review flag. It does **not** include
+  the sampled page text: a model already read it, and the hint is what the session
+  needs. `report_product` lists its files compactly (id, path, media type, disposition,
+  hint) with the line and type. `report_line` lists its products and aliases.
+- **`list_unfiled`** is the worklist. With no folder it returns folders that hold
+  unfiled files, with counts and the root each is in. With a folder it returns that
+  folder's own unfiled files (id, filename, media type, size, the text-analysis hint)
+  plus its subfolders with counts, so a session works one folder at a time. Files
+  already resolved never appear: `duplicate`, missing, and any file with an **open
+  review flag**, so a file the LLM deferred is not re-read every session.
+- **`list_product_types`** returns each type with counts of lines, products, and kept
+  files. **`list_product_lines`** returns lines with their type, aliases, and product
+  count; an optional case-insensitive `search` matches names and aliases, so the LLM
+  finds "D&D 5e" as "Dungeons & Dragons" before it creates a second line.
+- **`describe_schema`** lists tables and columns and ships a few named example queries
+  (files needing enrichment, open review flags). It marks `file_text.sample_pages` as
+  not for querying. **`query`** runs read-only SQL for anything else. It is not
+  column-restricted, so it *can* return `sample_pages`; keeping that out of sessions
+  is the tool description's job, not the database's.
 - **Pending changes:** every report response carries a top-level `pending_changes`
   field, computed by the path function over files whose current location differs from
   their target, with a breakdown by disposition. This is what tells the user when to
   run `reorganize`.
-- **Folder-grouped view of unfiled files** is a documented query, not a report field.
-  The read-only SQL tool already covers it, since the parent folder is derivable. The
-  schema-discovery tool ships a few named example queries: unfiled files by folder,
-  files needing enrichment, and open review flags.
 
 ## Open
 

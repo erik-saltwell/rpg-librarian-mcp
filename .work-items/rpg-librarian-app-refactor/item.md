@@ -30,10 +30,10 @@ CLI true-up.
 
 ## Resume note
 
-Status is `implementing`; Phases 0 to 3 of `plan.md` are done (see `progress.md`). The catalog location
+Status is `implementing`; Phases 0 to 4 of `plan.md` are done (see `progress.md`). The catalog location
 (`./catalog.db`, with `--catalog` / `RPG_LIBRARIAN_CATALOG` overrides) and the other
 plan unknowns are agreed, and Google search will use Serper.dev (`SERPER_API_KEY`;
-not yet in `.env`; the rpggeek and Google Books keys are currently rejected, see `progress.md`). Next: Phase 4.
+not yet in `.env`; the rpggeek and Google Books keys are currently rejected, see `progress.md`). Next: manual-testing checkpoint 2 (a real MCP session, see the app README), then Phase 5.
 Notes:
 
 1. **No rubric exists, by decision.** The user has chosen not to define one for this

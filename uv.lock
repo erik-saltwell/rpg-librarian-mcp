@@ -1918,6 +1918,7 @@ version = "0.1.0"
 source = { editable = "apps/rpg-librarian" }
 dependencies = [
     { name = "alembic" },
+    { name = "fastmcp" },
     { name = "isbnlib" },
     { name = "litellm" },
     { name = "lxml" },
@@ -1939,6 +1940,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.18.5" },
+    { name = "fastmcp", specifier = ">=3.0" },
     { name = "isbnlib", specifier = ">=3.10.14" },
     { name = "litellm", specifier = ">=1.60" },
     { name = "lxml", specifier = ">=6.0" },

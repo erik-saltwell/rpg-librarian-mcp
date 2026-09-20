@@ -116,9 +116,23 @@ Two placement rules:
 
 ## MCP tool surface
 
-Small and read-mostly. The five read tools are original requirements, not derived
-design: report on a file, report on a product, report on a product line, discover
-the database schema, and run read-only queries against it.
+Small and read-mostly: eight read tools and one writer.
+
+Five read tools are original requirements, not derived design: report on a file,
+report on a product, report on a product line, discover the database schema, and run
+read-only queries against it. Three more were added by agreement once the workflow was
+designed, because each replaces a step the LLM would otherwise repeat as hand-written
+SQL at the start of every session:
+
+- **`list_unfiled`** — the worklist. Folders of unfiled files with counts, then the
+  files in one folder. It is what makes "file a folder at a time" reliable.
+- **`list_product_types`** and **`list_product_lines`** — the coordinates the LLM must
+  match across separate sessions, with aliases, so it finds an existing line before it
+  creates a new one.
+
+Reports carry the *text-analysis hint* for a file (a short description and a guess at
+its system), never the sampled page text: a model has already read the sample, and
+the hint is what the session needs from it.
 
 A sixth tool in the original requirements — a `move` tool that updated filesystem
 and catalog atomically — was **dropped by explicit agreement**. `reorganize`
@@ -209,7 +223,8 @@ library root (see [catalog-schema.md](catalog-schema.md)).
 | New app in `apps/`, v1 package removed | v1's scheme and schema are being replaced, not migrated |
 | New catalog schema designed in this refactor | The v1 model encodes the old organization scheme |
 | One app, two entry points (FastMCP stdio, CLI) | Same catalog logic, different front door |
-| MCP surface is the five read tools from the original requirements plus one writer | Read-mostly by design; judgment is the LLM's only job |
+| MCP surface is eight read tools plus one writer: the five original read tools, plus `list_unfiled`, `list_product_types`, and `list_product_lines` | Read-mostly by design; judgment is the LLM's only job. The three additions replace SQL the LLM would otherwise rewrite each session, and keep lookups of the cross-session coordinates (lines, types) exact. |
+| Reports return the text-analysis hint, never the sampled page text | A model already read the sample; sending it again costs context for no new signal |
 | The originally-specified `move` tool is dropped | Explicitly agreed; `reorganize` subsumes it and cross-share atomicity was never achievable |
 | Catalog is local; content is on the share | Content outgrew local disk |
 | CLI may call an LLM for extraction, never for orchestration or judgment | Keeps token spend proportional to judgment, not file count |
@@ -249,8 +264,8 @@ inconsistently, and some may be flat. The app does not interpret this. It expose
 
 - The parent folder is derivable from `(root_id, relative_path)`, so no new column is
   needed.
-- The LLM can query unfiled files grouped by parent folder, with counts, and work a
-  folder at a time. `update_product` accepts many files per call.
+- The LLM lists unfiled folders with counts (`list_unfiled`) and works a folder at a
+  time. `update_product` accepts many files per call.
 - Flat piles fall back to per-file work, using evidence from `scan` and `enrich`
   (ISBN, barcode, DriveThruRPG match, sampled text). Files matching the same
   DriveThruRPG product are a candidate evidence signal, not an asserted group.

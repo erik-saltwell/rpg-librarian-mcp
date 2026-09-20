@@ -6,9 +6,9 @@ from .Disposition import Disposition
 from .DtrpgResult import DtrpgResult
 from .Error import Error
 from .File import File
-from .FileLlmExtraction import FileLlmExtraction
 from .FileMetadata import FileMetadata
 from .FileText import FileText
+from .FileTextAnalysis import FileTextAnalysis
 from .GoogleSearchResult import GoogleSearchResult
 from .ImageMetadata import ImageMetadata
 from .IsbnResult import IsbnResult
@@ -33,9 +33,9 @@ __all__ = [
     "Error",
     "EvidenceBase",
     "File",
-    "FileLlmExtraction",
     "FileMetadata",
     "FileText",
+    "FileTextAnalysis",
     "GoogleSearchResult",
     "ImageMetadata",
     "IsbnResult",

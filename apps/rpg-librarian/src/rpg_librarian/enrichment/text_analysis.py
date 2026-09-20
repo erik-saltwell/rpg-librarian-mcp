@@ -5,7 +5,7 @@ import os
 
 from pydantic import BaseModel
 
-from ..model import FileLlmExtraction, ProcessingStage
+from ..model import FileTextAnalysis, ProcessingStage
 from ..model.core import FileMetadataBase
 from .base import FatalSourceError
 from .queries import FileContext
@@ -63,16 +63,16 @@ def judge(sample_pages: dict[str, str]) -> Judgment:
     return Judgment.model_validate_json(response.choices[0].message.content)
 
 
-class LlmSource:
-    """Extract a description and a system guess from the sampled PDF text.
+class TextAnalysisSource:
+    """Read the stored text sample and record a description and a system guess.
 
     A file whose sample has no real text gets an empty row without calling the
     model: nothing to reason about, and the row records that it was considered.
     """
 
-    name = "llm"
-    stage = ProcessingStage.llm
-    table = FileLlmExtraction
+    name = "text_analysis"
+    stage = ProcessingStage.text_analysis
+    table = FileTextAnalysis
 
     def unavailable_reason(self) -> str | None:
         return None  # credentials are litellm's; a bad one stops the source
@@ -83,8 +83,8 @@ class LlmSource:
     def fetch(self, context: FileContext) -> FileMetadataBase | None:
         pages = context.sample_pages or {}
         if not any(text.strip() for text in pages.values()):
-            return FileLlmExtraction(description=None, possible_system=None)
+            return FileTextAnalysis(description=None, possible_system=None)
         judgment = judge(pages)
-        return FileLlmExtraction(
+        return FileTextAnalysis(
             description=judgment.description, possible_system=judgment.possible_system
         )

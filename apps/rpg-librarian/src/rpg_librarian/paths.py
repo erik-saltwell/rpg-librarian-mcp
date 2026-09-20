@@ -24,6 +24,13 @@ _RESERVED = frozenset(
 _MAX_COMPONENT_LENGTH = 200  # well under the 255 SMB limit, leaving room for suffixes
 TRASH_DIRNAME = ".trash"
 
+# Where each non-kept disposition is routed, under `<library>/.trash/`.
+TRASH_BUCKETS: dict[Disposition, str] = {
+    Disposition.duplicate: "duplicates",
+    Disposition.superseded: "superseded",
+    Disposition.discard: "discarded",
+}
+
 
 def sanitize_name(name: str) -> str:
     """Make a name safe as one path component.
@@ -82,3 +89,33 @@ def target_relative_path(
     if kept_count > 1:
         parts.append(sanitize_name(product_name))
     return PurePosixPath(*parts, filename)
+
+
+def trash_bucket_of(root_is_library: bool, relative_path: str) -> str | None:
+    """The trash bucket a library-relative path already sits in, else None."""
+    parts = PurePosixPath(relative_path).parts
+    if root_is_library and len(parts) > 2 and parts[0] == TRASH_DIRNAME:
+        return parts[1]
+    return None
+
+
+def desired_trash_path(
+    bucket: str,
+    *,
+    root_id: int,
+    root_path: str,
+    root_is_library: bool,
+    relative_path: str,
+) -> PurePosixPath:
+    """Where a non-kept file belongs, relative to the library root.
+
+    The original relative path is preserved beneath the bucket so nothing collides,
+    behind a `<root id>-<root folder name>` component so two dumps holding the same
+    relative path stay apart. A file already inside `.trash/` only swaps its bucket,
+    so the location is stable: applying this to its own result changes nothing.
+    """
+    parts = PurePosixPath(relative_path).parts
+    if trash_bucket_of(root_is_library, relative_path) is not None:
+        return PurePosixPath(TRASH_DIRNAME, bucket, *parts[2:])
+    origin = f"{root_id}-{sanitize_name(PurePosixPath(root_path).name)}"
+    return PurePosixPath(TRASH_DIRNAME, bucket, origin, *parts)

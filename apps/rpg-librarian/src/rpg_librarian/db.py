@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 from importlib import resources
@@ -35,15 +36,17 @@ def create_catalog_engine(db_path: Path) -> Engine:
 
 
 @contextmanager
-def session_scope(db_path: Path) -> Generator[Session]:
-    """A session on an existing catalog, migrated to head.
+def session_scope(db_path: Path, *, migrate: bool = True) -> Generator[Session]:
+    """A session on an existing catalog, migrated to head unless `migrate` is False.
 
     Commits when the block exits cleanly and rolls back if it raises, so one block is
-    one transaction. Never creates the catalog; only `init` does.
+    one transaction. Never creates the catalog; only `init` does. A long-running
+    server migrates once at startup and passes `migrate=False` per call.
     """
     if not db_path.exists():
         raise CatalogNotFoundError(db_path)
-    upgrade(db_path)
+    if migrate:
+        upgrade(db_path)
     engine = create_catalog_engine(db_path)
     try:
         with Session(engine) as session:
@@ -55,3 +58,15 @@ def session_scope(db_path: Path) -> Generator[Session]:
                 raise
     finally:
         engine.dispose()
+
+
+@contextmanager
+def readonly_connection(db_path: Path) -> Generator[sqlite3.Connection]:
+    """A connection that SQLite itself refuses to write through."""
+    if not db_path.exists():
+        raise CatalogNotFoundError(db_path)
+    connection = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        yield connection
+    finally:
+        connection.close()

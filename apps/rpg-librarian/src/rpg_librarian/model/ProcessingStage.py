@@ -13,5 +13,5 @@ class ProcessingStage(StrEnum):
     rpggeek = "rpggeek"
     isbn = "isbn"
     google = "google"
-    llm = "llm"
+    text_analysis = "text_analysis"
     reorganize = "reorganize"
