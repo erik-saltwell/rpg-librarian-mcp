@@ -65,9 +65,6 @@ from pathlib import Path
 
 import fitz
 import litellm
-from rpg_librarian_tools.barcode import find_isbn_or_issn_barcode
-from rpg_librarian_tools.isbn import isbn, issn
-from rpg_librarian_tools.text_extraction import barcode_sample_pages
 from sqlmodel import col, select
 
 from rpg_librarian_mcp.catalog import Catalog, load_env
@@ -83,6 +80,8 @@ from rpg_librarian_mcp.model import (
     ProcessingStage,
 )
 from rpg_librarian_mcp.progress import ProgressUpdate
+from rpg_librarian_tools.identifiers import find_publication_identifiers
+from rpg_librarian_tools.pdf import scan_identifiers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("migrate_legacy_catalog")
@@ -248,23 +247,34 @@ def run_scan(catalog: Catalog) -> None:
 
 
 def _extract_isbn_issn(
-    doc: fitz.Document, content: str, file_path: Path
+    page_count: int, content: str, file_path: Path
 ) -> tuple[str | None, str | None, str | None]:
     """Mirrors ReadPdfsCommand's non-OCR extraction chain: barcode, then
     text-based regex, then embedded PDF metadata fields."""
-    barcode_match = find_isbn_or_issn_barcode(doc, barcode_sample_pages(doc.page_count))
-    pdf_isbn = barcode_match.isbn if barcode_match else None
-    pdf_issn = barcode_match.issn if barcode_match else None
+    pages = tuple(
+        sorted(
+            set(range(min(2, page_count))) | ({page_count - 1} if page_count else set())
+        )
+    )
+    barcode_matches = scan_identifiers(file_path, pages) if pages else ()
+    barcode_match = barcode_matches[0] if barcode_matches else None
+    pdf_isbn = (
+        barcode_match.value if barcode_match and barcode_match.kind == "isbn" else None
+    )
+    pdf_issn = (
+        barcode_match.value if barcode_match and barcode_match.kind == "issn" else None
+    )
     if pdf_isbn is None and pdf_issn is None:
-        pdf_isbn = isbn.extract(content)
-    if pdf_isbn is None and pdf_issn is None:
-        pdf_issn = issn.extract(content)
+        text_matches = find_publication_identifiers(content)
+        if text_matches:
+            pdf_isbn = text_matches[0].value if text_matches[0].kind == "isbn" else None
+            pdf_issn = text_matches[0].value if text_matches[0].kind == "issn" else None
     if pdf_isbn is None and pdf_issn is None:
         fallback = PdfExtractor(file_path)
         pdf_isbn = fallback.extract_isbn()
         if pdf_isbn is None:
             pdf_issn = fallback.extract_issn()
-    barcode_text = barcode_match.barcode_text if barcode_match else None
+    barcode_text = barcode_match.raw_value if barcode_match else None
     return barcode_text, pdf_isbn, pdf_issn
 
 
@@ -315,7 +325,7 @@ def run_backfill(catalog: Catalog) -> None:
                         skipped_encrypted += 1
                         continue
                     barcode_text, pdf_isbn, pdf_issn = _extract_isbn_issn(
-                        doc, content, file_path
+                        doc.page_count, content, file_path
                     )
                 finally:
                     doc.close()

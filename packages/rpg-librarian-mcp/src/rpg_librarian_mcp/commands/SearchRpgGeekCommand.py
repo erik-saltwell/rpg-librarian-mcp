@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 from rpg_librarian_tools.rpggeek import Candidate, search
 
@@ -11,7 +11,9 @@ class SearchRpgGeekCommand:
     def __init__(
         self,
         bearer_token: str | None,
-        search_operation: Callable[[str, int, str | None], Awaitable[list[Candidate]]]
+        search_operation: Callable[
+            [str, int, str | None], Awaitable[Sequence[Candidate]]
+        ]
         | None = None,
     ) -> None:
         self.bearer_token = bearer_token
@@ -40,7 +42,7 @@ class SearchRpgGeekCommand:
             for c in candidates
         ]
 
-    async def _search(self, query: str, limit: int) -> list[Candidate]:
+    async def _search(self, query: str, limit: int) -> Sequence[Candidate]:
         if self.search_operation is not None:
             return await self.search_operation(query, limit, self.bearer_token)
         return await search(query, limit, bearer_token=self.bearer_token)

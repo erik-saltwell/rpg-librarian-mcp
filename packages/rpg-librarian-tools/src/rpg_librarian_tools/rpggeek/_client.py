@@ -14,37 +14,43 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
+from ..errors import AuthenticationError, RateLimitError, RemoteServiceError
 from ..request_policy import DEFAULT_REQUEST_POLICY, RequestPolicy
 
 log = logging.getLogger(__name__)
 
 _BASE_URL = "https://rpggeek.com/xmlapi2"
+type QueryValue = str | int | float | None
 
 
 class Candidate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     rpggeek_id: int
     name: str
     year_published: int | None = None
 
 
 class ProductDetails(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     rpggeek_id: int
     name: str
     year_published: int | None = None
     description: str | None = None
-    systems: list[str] = []
-    categories: list[str] = []
-    designers: list[str] = []
-    publishers: list[str] = []
+    systems: tuple[str, ...] = ()
+    categories: tuple[str, ...] = ()
+    designers: tuple[str, ...] = ()
+    publishers: tuple[str, ...] = ()
     thumbnail_url: str | None = None
     rating: float | None = None
 
 
 @dataclass
-class RpgGeekClient:
-    rate_limit_delay: float = field(default=1.0)
+class _RpgGeekApi:
+    policy: RequestPolicy = field(default=DEFAULT_REQUEST_POLICY)
     bearer_token: str | None = field(default=None, repr=False)
     _http: httpx.AsyncClient = field(init=False, repr=False)
 
@@ -53,17 +59,47 @@ class RpgGeekClient:
         if not token:
             log.warning("RPGGEEK_BEARER_TOKEN not set; calling RPGGeek unauthenticated")
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        self._http = httpx.AsyncClient(headers=headers)
+        self._http = httpx.AsyncClient(
+            headers=headers, timeout=self.policy.timeout_seconds
+        )
+
+    async def _get(self, path: str, **params: QueryValue) -> httpx.Response:
+        last_error: Exception | None = None
+        for attempt in range(self.policy.max_attempts):
+            if self.policy.minimum_request_interval:
+                await asyncio.sleep(self.policy.minimum_request_interval)
+            try:
+                response = await self._http.get(path, params=params)
+                if response.status_code in (401, 403):
+                    raise AuthenticationError("RPGGeek rejected the bearer token")
+                if response.status_code == 429:
+                    raise RateLimitError("RPGGeek")
+                if response.is_error:
+                    raise RemoteServiceError(
+                        "RPGGeek", response.status_code, response.status_code >= 500
+                    )
+                return response
+            except RemoteServiceError as error:
+                if not error.retryable:
+                    raise
+                last_error = error
+                if attempt + 1 < self.policy.max_attempts:
+                    await asyncio.sleep(self.policy.backoff_seconds * (2**attempt))
+            except (httpx.HTTPError, RateLimitError) as error:
+                last_error = error
+                if attempt + 1 < self.policy.max_attempts:
+                    await asyncio.sleep(self.policy.backoff_seconds * (2**attempt))
+        if isinstance(last_error, (RateLimitError, RemoteServiceError)):
+            raise last_error
+        raise RemoteServiceError("RPGGeek", retryable=True) from last_error
 
     async def search(self, query: str, max_values: int = 5) -> list[Candidate]:
         """Search RPGGeek once using a single name, ISBN, or other query."""
-        await asyncio.sleep(self.rate_limit_delay)
-        response = await self._http.get(
+        response = await self._get(
             f"{_BASE_URL}/search",
-            params={"query": query, "type": "rpgitem"},
+            query=query,
+            type="rpgitem",
         )
-        response.raise_for_status()
-
         root = ET.fromstring(response.text)
         candidates = []
         for item in root.findall("item"):
@@ -81,13 +117,12 @@ class RpgGeekClient:
         return candidates[:max_values]
 
     async def get_product_details(self, rpggeek_id: int) -> ProductDetails:
-        await asyncio.sleep(self.rate_limit_delay)
-        response = await self._http.get(
+        response = await self._get(
             f"{_BASE_URL}/thing",
-            params={"id": rpggeek_id, "type": "rpgitem", "stats": 1},
+            id=rpggeek_id,
+            type="rpgitem",
+            stats=1,
         )
-        response.raise_for_status()
-
         root = ET.fromstring(response.text)
         item = root.find("item")
         if item is None:
@@ -139,7 +174,7 @@ class RpgGeekClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def __aenter__(self) -> RpgGeekClient:
+    async def __aenter__(self) -> _RpgGeekApi:
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
@@ -152,12 +187,10 @@ async def search_rpggeek(
     *,
     bearer_token: str | None = None,
     policy: RequestPolicy = DEFAULT_REQUEST_POLICY,
-) -> list[Candidate]:
+) -> tuple[Candidate, ...]:
     """Perform one self-contained RPGGeek search operation."""
-    async with RpgGeekClient(
-        rate_limit_delay=policy.minimum_request_interval, bearer_token=bearer_token
-    ) as client:
-        return await client.search(query, max_values)
+    async with _RpgGeekApi(bearer_token=bearer_token, policy=policy) as client:
+        return tuple(await client.search(query, max_values))
 
 
 async def get_rpggeek_product(
@@ -167,7 +200,5 @@ async def get_rpggeek_product(
     policy: RequestPolicy = DEFAULT_REQUEST_POLICY,
 ) -> ProductDetails:
     """Perform one self-contained RPGGeek product lookup operation."""
-    async with RpgGeekClient(
-        rate_limit_delay=policy.minimum_request_interval, bearer_token=bearer_token
-    ) as client:
+    async with _RpgGeekApi(bearer_token=bearer_token, policy=policy) as client:
         return await client.get_product_details(rpggeek_id)

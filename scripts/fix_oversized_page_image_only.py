@@ -36,13 +36,12 @@ from __future__ import annotations
 import argparse
 import logging
 
-import fitz
-from rpg_librarian_tools.text_extraction import _all_pages_oversized_and_textless
 from sqlmodel import col, select
 
 from rpg_librarian_mcp.catalog import Catalog, load_env
 from rpg_librarian_mcp.db import session_scope
 from rpg_librarian_mcp.model import Entry, PdfMetadata
+from rpg_librarian_tools.pdf import ImageAssessmentStatus, assess_images
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("fix_oversized_page_image_only")
@@ -73,13 +72,9 @@ def run(catalog: Catalog, dry_run: bool) -> None:
                 continue
 
             try:
-                doc = fitz.open(file_path)
-                try:
-                    if doc.needs_pass:
-                        continue
-                    oversized = _all_pages_oversized_and_textless(doc)
-                finally:
-                    doc.close()
+                oversized = (
+                    assess_images(file_path).status is ImageAssessmentStatus.IMAGE_ONLY
+                )
             except Exception as exc:
                 errored += 1
                 log.warning("error reading %s: %s", file_path, exc)

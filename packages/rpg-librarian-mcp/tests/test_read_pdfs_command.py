@@ -20,7 +20,12 @@ from rpg_librarian_mcp.model import (
     ProcessingStage,
 )
 from rpg_librarian_mcp.observability import EntryTracker
-from rpg_librarian_tools import text_extraction
+from rpg_librarian_tools import pdf
+from rpg_librarian_tools.identifiers import (
+    IdentifierKind,
+    IdentifierSource,
+    PublicationIdentifier,
+)
 
 
 def _catalog(tmp_path: Path) -> Catalog:
@@ -78,15 +83,23 @@ def _command(catalog: Catalog) -> ReadPdfsCommand:
     )
 
 
-def _no_tesseract_check(monkeypatch) -> None:
-    monkeypatch.setattr(read_pdfs_module, "check_tesseract_available", lambda: None)
-
-
 def _no_barcode_match(monkeypatch) -> None:
     monkeypatch.setattr(
         read_pdfs_module,
-        "find_isbn_or_issn_barcode_isolated",
-        lambda file_path, pages: None,
+        "scan_identifiers",
+        lambda file_path, pages: (),
+    )
+
+
+def _isbn_barcode() -> tuple[PublicationIdentifier, ...]:
+    return (
+        PublicationIdentifier(
+            IdentifierKind.ISBN,
+            "9780306406157",
+            IdentifierSource.BARCODE,
+            "9780306406157",
+            page=0,
+        ),
     )
 
 
@@ -115,16 +128,13 @@ async def test_likely_image_only_is_skipped_when_ignore_flag_is_set(
     catalog = _catalog(tmp_path)
     _insert_pdf_entry(catalog)
     entry = _get_entry(catalog, "book.pdf")
-    _no_tesseract_check(monkeypatch)
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
     _set_likely_image_only(catalog, entry, True)
 
     def _fail_if_called(file_path, pages):
         raise AssertionError("must not process a skipped image-only PDF")
 
-    monkeypatch.setattr(
-        read_pdfs_module, "find_isbn_or_issn_barcode_isolated", _fail_if_called
-    )
+    monkeypatch.setattr(read_pdfs_module, "scan_identifiers", _fail_if_called)
     command = _command(catalog)
 
     result = await command.process(
@@ -143,7 +153,6 @@ async def test_likely_image_only_is_processed_normally_when_flag_is_not_set(
     catalog = _catalog(tmp_path)
     _insert_pdf_entry(catalog)
     entry = _get_entry(catalog, "book.pdf")
-    _no_tesseract_check(monkeypatch)
     _no_llm_call(monkeypatch)
     _no_barcode_match(monkeypatch)
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
@@ -172,7 +181,6 @@ async def test_normal_pdf_is_processed_even_when_ignore_flag_is_set(
     catalog = _catalog(tmp_path)
     _insert_pdf_entry(catalog)
     entry = _get_entry(catalog, "book.pdf")
-    _no_tesseract_check(monkeypatch)
     _no_llm_call(monkeypatch)
     _no_barcode_match(monkeypatch)
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
@@ -257,7 +265,6 @@ async def test_force_still_skips_non_pdf_entries(tmp_path, monkeypatch):
     and errored (fitz.open on a .txt, "not supported" on non-PDF types)
     instead of being skipped."""
     await _catalog_text_file(tmp_path, "notes.txt")
-    _no_tesseract_check(monkeypatch)
 
     def _fail_if_opened(file_path):
         raise AssertionError("must not attempt to open a non-PDF entry")
@@ -274,7 +281,6 @@ async def test_force_still_skips_non_pdf_entries(tmp_path, monkeypatch):
 async def test_password_protected_pdf_is_skipped_not_erroed(tmp_path, monkeypatch):
     catalog = _catalog(tmp_path)
     _insert_pdf_entry(catalog)
-    _no_tesseract_check(monkeypatch)
     doc = _Doc()
     doc.needs_pass = True
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: doc)
@@ -295,15 +301,12 @@ async def test_process_one_persists_barcode_match_and_sample_text(
     catalog = _catalog(tmp_path)
     _insert_pdf_entry(catalog)
     entry = _get_entry(catalog, "book.pdf")
-    _no_tesseract_check(monkeypatch)
     _no_llm_call(monkeypatch)
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
     monkeypatch.setattr(
         read_pdfs_module,
-        "find_isbn_or_issn_barcode_isolated",
-        lambda file_path, pages: SimpleNamespace(
-            barcode_text="9780306406157", isbn="9780306406157", issn=None
-        ),
+        "scan_identifiers",
+        lambda file_path, pages: _isbn_barcode(),
     )
     command = _command(catalog)
 
@@ -329,7 +332,6 @@ async def test_process_one_reports_pdf_page_instrumentation(tmp_path, monkeypatc
     catalog = _catalog(tmp_path)
     _insert_pdf_entry(catalog)
     entry = _get_entry(catalog, "book.pdf")
-    _no_tesseract_check(monkeypatch)
     _no_llm_call(monkeypatch)
     _no_barcode_match(monkeypatch)
     monkeypatch.setattr(
@@ -366,13 +368,10 @@ async def test_process_one_skips_llm_when_sample_text_is_empty(tmp_path, monkeyp
     catalog = _catalog(tmp_path)
     _insert_pdf_entry(catalog)
     entry = _get_entry(catalog, "book.pdf")
-    _no_tesseract_check(monkeypatch)
     _no_barcode_match(monkeypatch)
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _EmptyDoc())
-    monkeypatch.setattr(
-        text_extraction, "render_page_image", lambda page, dpi=None: "image"
-    )
-    monkeypatch.setattr(text_extraction, "ocr_page_image", lambda image: "")
+    monkeypatch.setattr(pdf, "render_page_image", lambda page, dpi=None: "image")
+    monkeypatch.setattr(pdf, "ocr_page_image", lambda image: "")
 
     def _fail_if_called(sample_text):
         raise AssertionError("LLM must not be called when sample text is empty")
@@ -399,38 +398,14 @@ async def test_process_one_skips_llm_when_sample_text_is_empty(tmp_path, monkeyp
         assert contents.possible_system is None
 
 
-async def test_tesseract_missing_aborts_before_any_entry_is_processed(
-    tmp_path, monkeypatch
-):
-    catalog = _catalog(tmp_path)
-    _insert_pdf_entry(catalog)
-
-    def _raise():
-        raise RuntimeError("tesseract not found")
-
-    monkeypatch.setattr(read_pdfs_module, "check_tesseract_available", _raise)
-
-    def _fail_if_opened(file_path):
-        raise AssertionError("must not open any PDF before the Tesseract check")
-
-    monkeypatch.setattr(read_pdfs_module.fitz, "open", _fail_if_opened)
-    command = _command(catalog)
-
-    with pytest.raises(RuntimeError, match="tesseract not found"):
-        await command.process(tmp_path, True, False, FakeProgressReporter())
-
-
 async def test_authentication_error_aborts_the_whole_run(tmp_path, monkeypatch):
     catalog = _catalog(tmp_path)
     _insert_pdf_entry(catalog)
-    _no_tesseract_check(monkeypatch)
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
     monkeypatch.setattr(
         read_pdfs_module,
-        "find_isbn_or_issn_barcode_isolated",
-        lambda file_path, pages: SimpleNamespace(
-            barcode_text="9780306406157", isbn="9780306406157", issn=None
-        ),
+        "scan_identifiers",
+        lambda file_path, pages: _isbn_barcode(),
     )
 
     def _raise_auth_error(sample_text):
@@ -455,14 +430,11 @@ async def test_non_fatal_llm_error_still_persists_non_llm_signal(tmp_path, monke
     catalog = _catalog(tmp_path)
     _insert_pdf_entry(catalog)
     entry = _get_entry(catalog, "book.pdf")
-    _no_tesseract_check(monkeypatch)
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
     monkeypatch.setattr(
         read_pdfs_module,
-        "find_isbn_or_issn_barcode_isolated",
-        lambda file_path, pages: SimpleNamespace(
-            barcode_text="9780306406157", isbn="9780306406157", issn=None
-        ),
+        "scan_identifiers",
+        lambda file_path, pages: _isbn_barcode(),
     )
 
     def _raise(sample_text):
@@ -488,14 +460,11 @@ async def test_non_fatal_llm_error_is_recorded_per_entry(tmp_path, monkeypatch):
     catalog = _catalog(tmp_path)
     _insert_pdf_entry(catalog)
     entry = _get_entry(catalog, "book.pdf")
-    _no_tesseract_check(monkeypatch)
     monkeypatch.setattr(read_pdfs_module.fitz, "open", lambda file_path: _Doc())
     monkeypatch.setattr(
         read_pdfs_module,
-        "find_isbn_or_issn_barcode_isolated",
-        lambda file_path, pages: SimpleNamespace(
-            barcode_text="9780306406157", isbn="9780306406157", issn=None
-        ),
+        "scan_identifiers",
+        lambda file_path, pages: _isbn_barcode(),
     )
 
     def _raise(sample_text):

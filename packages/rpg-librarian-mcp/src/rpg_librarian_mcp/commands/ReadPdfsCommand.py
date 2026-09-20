@@ -22,10 +22,14 @@ from .UpdateBaseCommand import UpdateBaseCommand, UpdateResult
 
 
 def _barcode_pages(page_count: int) -> tuple[int, ...]:
+    if page_count == 0:
+        return ()
     return tuple(sorted(set(range(min(2, page_count))) | {page_count - 1}))
 
 
 def _text_pages(page_count: int) -> tuple[int, ...]:
+    if page_count == 0:
+        return ()
     return tuple(
         sorted(
             set(range(min(5, page_count)))
@@ -101,6 +105,9 @@ class ReadPdfsCommand(UpdateBaseCommand):
         finally:
             doc.close()
 
+        if page_count == 0:
+            return
+
         # `UpdateMetadataCommand` (stage `extract_metadata`, which always
         # runs before `read_pdfs`) already computed and persisted this via
         # `PdfExtractor` -- no need to redo the render+OCR work here. A
@@ -128,7 +135,7 @@ class ReadPdfsCommand(UpdateBaseCommand):
         # rendering is the risky part of this file, whether it's rendering
         # for barcode scanning or for OCR, and either can hang or crash on
         # a malformed page. Each reopens `file_path` itself; see
-        # `find_isbn_or_issn_barcode_isolated` / `extract_pdf_text`.
+        # `scan_identifiers` / `extract_text`.
         barcode_matches = self._pdf_pool.submit(
             scan_identifiers, file_path, _barcode_pages(page_count)
         )

@@ -15,6 +15,7 @@ _HEADERS = {
     "User-Agent": "rpg-librarian-tools",
 }
 _LIBRARY_PAGE_SIZE = 50
+type QueryValue = str | int | float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +44,9 @@ class _Api:
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
         await self.client.aclose()
 
-    async def request(self, method: str, path: str, **params: object) -> httpx.Response:
+    async def request(
+        self, method: str, path: str, **params: QueryValue
+    ) -> httpx.Response:
         last_error: Exception | None = None
         for attempt in range(self.policy.max_attempts):
             elapsed = asyncio.get_running_loop().time() - self.last_request
@@ -82,7 +85,7 @@ class _Api:
                 "DriveThruRPG authentication returned no token"
             ) from error
 
-    async def get(self, path: str, **params: object) -> list[dict]:
+    async def get(self, path: str, **params: QueryValue) -> list[dict]:
         response = await self.request("GET", path, **params)
         if response.status_code == 401:
             await self.authenticate()
