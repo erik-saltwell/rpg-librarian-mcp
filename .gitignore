@@ -27,3 +27,6 @@ wheels/
 *.db-journal
 *.sqlite
 *.sqlite3
+
+.catalog_archive/
+.catalog_archive

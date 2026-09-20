@@ -37,7 +37,9 @@ def main() -> int:
 
         try:
             # Build a fresh database using only migration files.
-            alembic_ini = "src/rpg_librarian_mcp/alembic/alembic.ini"
+            alembic_ini = (
+                "packages/rpg-librarian-mcp/src/rpg_librarian_mcp/alembic/alembic.ini"
+            )
 
             run_command(
                 [

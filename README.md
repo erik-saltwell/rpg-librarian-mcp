@@ -1,38 +1,26 @@
-# rpg-librarian-mcp
+# RPG Librarian
 
-MCP server (stdio) for cataloging and organizing a digital RPG archive.
+Monorepo for cataloging and organizing a digital RPG archive.
 
 ## Layout
 
-src/rpg_librarian_mcp/
-  main.py       entry point (rpg-librarian-mcp / python -m rpg_librarian_mcp)
-  server.py         builds the FastMCP server, registers tools, runs stdio
-  catalog.py        .env loading + Catalog (library root = cwd)
-  db.py             engine/session setup, auto-bootstraps a new catalog's db
-  alembic/
-    alembic.ini      bundled into the package so migrations work post-install
-    migrations/
-  resources/
-    CLAUDE.md          default CLAUDE.md seeded into a new library root
-    llm_settings.yaml   checked-in litellm model choice, read via importlib.resources
-    prompts/            bundled Jinja prompt templates (e.g. read_pdfs's LLM prompt)
-  model/             SQLModel tables (Entry, Error, MediaType, PdfContents, ...)
-  commands/          CommandProtocol + per-tool business logic (UpdateCatalogCommand, ...)
-  llm/               litellm settings loader + PDF description/system judgment
-  mcp/
-    init.py      REGISTRARS list -- add new tool modules here
-    status.py        librarian_status
-    update_catalog.py
-    directory_status.py  list_directory_entries, summarize_directories
-    errors.py            list_errors
-    readonly_query.py     run_readonly_query, get_catalog_schema
-    move.py               move
-    metadata.py           update_metadata
-    read_pdfs.py          read_pdfs
-  tools/              small stateless helpers (hashing, mime detection, path
-                       resolution, entry queries, barcode scanning, PDF text
-                       extraction, OCR)
-tests/
+```text
+packages/
+  rpg-librarian-mcp/
+    src/rpg_librarian_mcp/   MCP handlers, commands, persistence, and workflows
+    tests/
+  rpg-librarian-tools/
+    src/rpg_librarian_tools/ stateless file operations and service clients
+    tests/
+scripts/
+```
+
+`rpg-librarian-mcp` owns orchestration: MCP protocol handling, catalog/database
+state, worker lifecycle, and multi-step workflows. `rpg-librarian-tools` owns
+atomic operations with explicit inputs and plain outputs: PDF text/OCR and
+barcode extraction, ISBN/ISSN parsing, media detection, hashing and filesystem
+walking, plus thin DriveThruRPG and RPGGeek clients. The tools package never
+imports the MCP application.
 
 Adding a tool group: create `mcp/<name>.py` with
 `def register(mcp: FastMCP, catalog: Catalog) -> None:` that declares `@mcp.tool`
@@ -193,22 +181,24 @@ server's migrations to your scratch/dev library, however it's launched.
 
 ### Running or authoring a migration
 
-`alembic.ini` lives inside the package (`src/rpg_librarian_mcp/alembic/`),
+`alembic.ini` lives inside the MCP package
+(`packages/rpg-librarian-mcp/src/rpg_librarian_mcp/alembic/`),
 not at the repo root — it's bundled there so migrations work post-install
 (PyPI/`pipx`), not just from a source checkout. Every `alembic` CLI
-invocation needs `-c src/rpg_librarian_mcp/alembic/alembic.ini` explicitly;
+invocation needs the package-local path explicitly;
 bare `alembic ...` from the repo root won't find the config.
 
 After changing a model in `model/`, generate a revision from the diff:
 
-uv run alembic -c src/rpg_librarian_mcp/alembic/alembic.ini revision --autogenerate -m "..."
+uv run alembic -c packages/rpg-librarian-mcp/src/rpg_librarian_mcp/alembic/alembic.ini revision --autogenerate -m "..."
 
 Review the generated file under
-`src/rpg_librarian_mcp/alembic/migrations/versions/` — autogenerate can miss
+`packages/rpg-librarian-mcp/src/rpg_librarian_mcp/alembic/migrations/versions/`
+— autogenerate can miss
 renames (reads as drop+add) or defaults, so fix up by hand if needed. Then
 apply it to your `DATABASE_URL` target to confirm it runs cleanly:
 
-uv run alembic -c src/rpg_librarian_mcp/alembic/alembic.ini upgrade head
+uv run alembic -c packages/rpg-librarian-mcp/src/rpg_librarian_mcp/alembic/alembic.ini upgrade head
 
 ## Checks
 

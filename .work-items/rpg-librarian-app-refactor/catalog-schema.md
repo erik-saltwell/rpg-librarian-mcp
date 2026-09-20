@@ -1,0 +1,336 @@
+# Catalog schema design
+
+Supplements [intent.md](intent.md). That document deferred the concrete shape of the
+catalog ("Product-line gets normalized identity ... concrete shape deferred to schema
+design"); this one records the shape worked out with the user in a design session.
+Every decision below was explicitly chosen or agreed by the user unless listed under
+"Open". Table and column names are working names, not final identifiers.
+
+The existing v1 models (`packages/rpg-librarian-mcp/src/rpg_librarian_mcp/model/`)
+were the starting point. v1's shape survives in outline (a file table with a nullable
+product foreign key, one metadata table per media type), but the schema is new and
+does not migrate v1's alembic chain.
+
+## Changes to intent.md
+
+These modified or extended what `intent.md` said. They have since been reconciled
+into it, and are kept here as a record of where the schema design changed it.
+
+- **Product type `vtt` is renamed `vtt packs`.** The content is collections of tokens
+  and other material used in a virtual tabletop, not virtual tabletops themselves.
+  This resolves the intent's open question about `vtt` as a type.
+- **`update_product` is specified.** Creation rules with `create_line` and
+  `create_type` flags (see "Creating lines, types, and products"), and the full
+  signature (see "The MCP surface over the schema"). The intent left both open.
+- **The LLM may create product types**, through `update_product`. The intent did not
+  say who could. This was the user's choice over a recommendation to keep types
+  closed to the LLM.
+- **Moving a file by hand** is handled by the `missing_since` mechanism below. The
+  intent's statement that a re-scan "re-identifies it by hash" holds, but a naive hash
+  match would have mislabelled the moved file as a duplicate.
+
+## Entities
+
+| Table | One row per | Written by |
+|---|---|---|
+| `root` | registered location: the library, or a staging dump | `init`, `add-source` |
+| `product_type` | function-based type (`games`, `maps`, `vtt packs`, ...) | `init`; `update_product` with `create_type` |
+| `product_line` | game, model line, or publisher within one type | `update_product` with `create_line` |
+| `product_line_alias` | alternate name for a line | `update_product` with `create_line` / `aliases` |
+| `product` | set of files that shipped together | `update_product` |
+| `file` | physical file occurrence on the share | `scan`, `update_product` |
+| per-media metadata tables (`pdf_`, `image_`, `audio_`, `video_`, `mesh_metadata`) and `file_metadata` | file of that media type; `file_metadata` for any file | `scan` |
+| `file_text` | file (PDFs) | `scan` |
+| `file_llm_extraction` | file | `enrich` |
+| other per-source evidence tables | file, per source (DriveThruRPG, RPGGeek, ISBN) | `enrich` |
+| `error` | file and stage | `scan`, `enrich` |
+| `review_flag` | LLM deferral on a file | `update_product` / session |
+
+Relationships: `file.root_id` → `root`; `file.product_id` → `product` (nullable);
+`product.product_line_id` → `product_line`; `product_line.product_type_id` →
+`product_type`; `file.duplicate_of_id` → `file` (nullable, self-reference).
+
+## Decisions and reasoning
+
+### A file row is a physical occurrence
+
+A file is identified by `(root_id, relative_path)`. `sha256` is indexed but **not**
+unique. Each physical copy needs its own disposition and path so `reorganize` can move
+a duplicate to `.trash/duplicates/`; a content-keyed table would need a second table
+for that per-copy state anyway. "Do I already have this?" stays a hash join.
+
+Paths are stored relative to a `root`. v1 keyed files on `(parent_path, filename)` with
+no root, which would collide across dumps (`dump_A/maps/x.pdf` vs `dump_B/maps/x.pdf`).
+The root's `kind` (library or staging) answers "is this still in a dump?" without path
+matching, and a changed share mount point is a one-row update.
+
+### Product lines and types
+
+- A product line belongs to exactly one type (`product_line.product_type_id`). A brand
+  that spans types needs one line row per type: "Dungeons & Dragons" under `games`,
+  generic D&D map packs under `maps`.
+- A line is unique on `(product_type_id, name)`, with an alias table so "D&D 5e" and
+  "Dungeons & Dragons" resolve to one line.
+- The seed list of types is a constant in code; `init` inserts any that are missing
+  (idempotent, and repairs a catalog missing a row). Adding a type is a code change,
+  not a migration.
+
+### Creating lines, types, and products
+
+`update_product` is the one writer and has these creation rules:
+
+| Name given | Behaviour |
+|---|---|
+| Unknown product line | Rejected, with the closest existing lines, unless `create_line: true` |
+| Unknown product type | Rejected, with the closest existing types, unless `create_type: true`, which implies `create_line` |
+| Unknown product name within a line | Created on first use, with a warning when the name is close to an existing product in that line |
+
+Reasons: the line is the coordinate that must match across separate sessions, and
+rejection at write time stops "D&D 5e" from silently becoming a second line before
+`reorganize` has put files in two folders. A type is a top-level folder on the share, so
+a typo would create a stray sibling folder; it therefore needs its own deliberate flag.
+Products are far more numerous and a wrong one is cheap to correct in the database, so
+they warn rather than block. The LLM does not need the full line list injected into its
+prompt: it can query the list at session start, and the rejection response supplies
+suggestions.
+
+`reorganize --dry-run` should also list any type folder that does not yet exist on the
+share as a "new top-level folder" (agreed as a second safety net). `reorganize` is a
+CLI-only verb and is not exposed through the MCP session (see `intent.md`), so this
+dry-run listing is read by the user at the terminal, not by the LLM.
+
+### Folders are derived, not stored
+
+The parent folder of a file is derivable from `(root_id, relative_path)`, so it has no
+column of its own. Groupings are never asserted by the schema: no `group` table or
+column exists, and `scan` does not propose one (see "Folder structure as evidence" in
+`intent.md`). The LLM finds folder-level batches by querying unfiled files grouped by
+parent folder, and records its own judgment through `update_product`, which accepts
+many files per call.
+
+### Product columns
+
+`product` has `name` (identity, unique within its line) plus nullable `publisher`,
+`year`, `artists`, and `description`. There is no separate `title` (it would duplicate
+`name`) and no `identification_method`. v1's enum was needed when several commands
+created products; here the LLM is the only writer, so most values would be
+`llm_judgment`, and the rest would be unverifiable self-claims. The basis for a decision
+is recoverable from the evidence tables.
+
+### Names and folder names
+
+Names are stored as given. The path function sanitizes them deterministically for the
+filesystem (illegal SMB/Windows characters, trailing dots, length). Because two
+different names can sanitize to the same folder ("Foo: Bar" and "Foo- Bar"),
+uniqueness is checked on the **sanitized** form within the parent at `update_product`
+time, and the error names the colliding existing entry. Nothing derived is stored.
+
+### Disposition and its invariant
+
+`disposition` is as in `intent.md` (`unfiled`, `keep`, `duplicate`, `superseded`,
+`discard`), now ratified. The single constraint is that **`keep` requires a
+`product_id`**. Other dispositions may keep theirs: a superseded file usually belongs
+to the product it was an older edition of, and linking it lets a product report list
+its superseded versions. `reorganize` can trust `keep` without re-checking.
+
+### Target path is computed, not stored
+
+One function derives a file's target
+`library/<type>/<line>/[<product>/]<filename>` from the file, product, line, and type.
+`reorganize` and the pending-change count both call it. A stored target would go stale
+whenever a product is promoted or a line is renamed, and each such change would have to
+touch every affected file. The cost is that the read-only SQL tool cannot see targets,
+so the pending count is a report field and `reorganize --dry-run` is the preview.
+
+The function needs the product's file count for the single-file rule. **Only files
+with `disposition = keep` and that `product_id` count**, because only they occupy the
+product folder. Consequence: superseding one of a product's two kept files drops it to
+one kept file, and the survivor moves up into the line folder on the next
+`reorganize`.
+
+### Duplicates and moved files
+
+- `duplicate_of_id` links a duplicate to its original. A library-root copy always wins:
+  a staging file matching a library file is the duplicate. If both are in staging, the
+  earlier-scanned wins. `scan` sets `duplicate_of_id` and `disposition = duplicate`
+  together.
+- The file row has a nullable `missing_since`. When `scan` finds a row's path absent it
+  sets `missing_since`. A later hash match against a missing row is a **move**: the row's
+  path is updated, `missing_since` is cleared, and product and disposition are kept. A
+  match against a row whose path still exists is a true duplicate. If a root is
+  unreachable (share offline), `scan` does not mark its files missing.
+
+### Roots
+
+`root` has `id`, `kind` (`library` or `staging`), `path` (location as mounted, unique),
+an optional `label`, `added_at`, and a nullable `last_scanned_at`. `init` enforces
+exactly one `library` root. `add-source` inserts a `staging` row, refuses a path nested
+inside (or containing) an existing root so that no file can belong to two roots, and
+does not scan.
+
+**`.trash/` lives under the library root**, holding `duplicates/`, `superseded/`, and
+`discarded/`. There is one place to empty by hand. Trashed files keep their rows, so
+they stay in the hash join: a fresh copy of a discarded or superseded file in a later
+dump is flagged `duplicate` rather than re-raised as a new question (the property
+`intent.md` requires of superseding). Trashing a file from a staging root crosses
+roots: a rename if both are on the same volume, otherwise a copy that `reorganize` must
+verify (by hash) before deleting the source.
+
+### File columns
+
+| Column | Notes |
+|---|---|
+| `id` | |
+| `root_id`, `relative_path` | Unique together. Filename and parent folder are derived. |
+| `size_bytes`, `mtime` | Filesystem stat, used by the skip rule. `mtime` is whole seconds: SMB timestamp granularity varies, and a sub-second mismatch would force endless rescans. |
+| `mime_type`, `media_type` | As in v1. `media_type` is the `rpg_librarian_tools` enum, stored as tolerant text. |
+| `sha256` | Indexed, not unique. |
+| `disposition` | Default `unfiled`. |
+| `product_id`, `duplicate_of_id`, `missing_since` | As described elsewhere in this document. |
+| `first_seen_at`, `last_seen_at` | `scan` sets `last_seen_at` when it finds the file present; `reorganize` sets it after a move. There is no separate `last_verified`: it would blur the meaning of `last_seen_at`. |
+
+### Scan skip rule
+
+- **Skip** a file when `(root, path)` exists and both size and mtime match the stored
+  values. Update `last_seen_at` and clear `missing_since`.
+- **Otherwise** treat it as changed: recopy, rehash, and replace its metadata, text,
+  and evidence rows.
+- **If the hash changed**, reset `disposition` to `unfiled` and clear `product_id` and
+  `duplicate_of_id`. Different content at the same path invalidates the earlier
+  judgment.
+
+`reorganize` applies the same size+mtime check before moving a file, and flags rather
+than clobbers on mismatch (see `intent.md`).
+
+### Per-media metadata tables
+
+v1's columns carry over unchanged, one row per file with `file_id` as the primary key,
+all columns nullable. They were built from what `scan` can extract, and no LLM judgment
+needs a field they lack.
+
+| Table | Columns |
+|---|---|
+| `file_metadata` (embedded properties, any media) | `title`, `artist`, `publisher`, `copyright` |
+| `pdf_metadata` | `page_count`, `is_encrypted`, `needs_password`, `has_extractable_text`, `likely_scanned`, `likely_image_only` |
+| `image_metadata` | `width`, `height`, `has_alpha`, `pixel_count` |
+| `audio_metadata` | `genre`, `duration_seconds` |
+| `video_metadata` | `duration_seconds`, `width`, `height`, `has_audio` |
+| `mesh_metadata` | `bounding_box_x`, `bounding_box_y`, `bounding_box_z`, `surface_area`, `unit` |
+
+`pixel_count` is `width × height` and redundant, kept so that "find large images" is a
+simple indexed comparison.
+
+### Product line aliases
+
+`product_line_alias` has `id`, `product_line_id`, and `alias`. A name given to
+`update_product` is matched against line names and aliases within the given type,
+ignoring case and collapsing whitespace. An alias may not equal any line name or other
+alias in the same type. The database enforces uniqueness on `(product_line_id, alias)`;
+the cross-line check runs in code at write time, since the alias row does not carry the
+type. Products get no aliases: they are far more numerous, and the near-match warning
+already covers naming variants.
+
+### Evidence attaches to files only
+
+`enrich` runs before any product exists, because grouping is the LLM's judgment and
+happens afterward, so evidence has nothing else to attach to. Each source gets its own
+table with one row per file, and each records provenance (which query, when fetched).
+Product-level facts (publisher, year, artists, description) are written onto the
+product by the LLM using that evidence. A shared polymorphic evidence table was
+rejected: it gives up foreign-key integrity for a case that does not arise.
+
+### Extracted text
+
+`scan` keeps a bounded sample, not full text. The bounds are v1's, hard-coded in
+`packages/rpg-librarian-tools/src/rpg_librarian_tools/_text_extraction.py`:
+
+- Text: first 5 pages plus last 2. A page with a real text layer is read directly; only
+  pages without one are OCR'd. Bounding the sample also bounds OCR, the most expensive
+  step in `scan`.
+- Barcode: first 2 pages plus the last page.
+
+The sample is stored as JSON keyed by page number, as in v1. There is no settings table
+and no recorded sample size, so changing a constant does not trigger a rescan; the
+remedy is v1's `clear-metadata` command. The cost of the choice: raising the sample
+size later means rereading affected files from the share.
+
+v1's single `PdfContents` table is split in two:
+
+| Table | Holds | Written by |
+|---|---|---|
+| `file_text` | `barcode`, `isbn`, `issn`, page-keyed sample text | `scan` |
+| `file_llm_extraction` | `description`, `possible_system` | `enrich` |
+
+This matches the intent's separate `scan` and `enrich` verbs, which fail differently:
+a failed LLM call leaves no second row, and the scan output is never in doubt. "Needs
+enrichment" becomes the absence of a `file_llm_extraction` row for a file that has a
+`file_text` row.
+
+### Errors and review flags
+
+Both v1 tables are kept, with `entry_id` becoming `file_id` and stages becoming the
+new verbs and their sub-steps.
+
+- `error`: one row per `(file_id, stage)`, overwritten on retry; a transient failure
+  log.
+- `review_flag`: the LLM's "defer rather than guess" queue, with a `reason`, at most one
+  open flag per file, and resolved flags kept with `resolved_at` and `resolution_note`
+  as decision history. It matters more here than in v1: the dump folder is the
+  worklist, and a file the LLM looked at and could not place would otherwise look
+  identical to one it has not reached, so every session would re-read it. `review_flag`
+  is a separate table so the ratified `disposition` enum is untouched.
+
+## The MCP surface over the schema
+
+### `update_product`
+
+One call is per product and carries files by id. Working parameter names:
+
+```
+update_product(
+  file_ids: [int],            # required, many per call
+  disposition: keep | superseded | discard | unfiled,
+  product_type, product_line, product,   # required when disposition = keep
+  product_metadata?: {publisher, year, artists, description},
+  create_line?: bool, create_type?: bool,
+  aliases?: [str],            # with create_line, or to add to an existing line
+  review_flag?: reason, note?: str
+)
+```
+
+- **Dispositions the LLM writes:** `keep`, `superseded`, `discard`, and `unfiled` (to
+  undo). `duplicate` is written only by `scan`.
+- **`keep`** requires type, line, and product, which enforces the `product_id`
+  invariant at the boundary. **`superseded`** takes the coordinates optionally, so the
+  file stays linked to the product it was an older edition of.
+- **`review_flag`** is mutually exclusive with `keep`, `superseded`, and `discard`. It
+  leaves the file `unfiled` and opens a flag. A later call with a real disposition
+  resolves the open flag automatically, recording `note` as the resolution note.
+- **All-or-nothing:** one call is one transaction. If any file is invalid nothing is
+  written, and the response names the failing file and the reason. Partial success
+  would leave the LLM guessing what landed.
+- **Returns** the resolved product, line, and type; which entities were created; any
+  near-match warnings; and the folder the product would be filed in, computed by the
+  path function so the LLM sees the outcome without a separate read.
+
+### Reads
+
+- `report_file`, `report_product`, and `report_line` each return a structured summary.
+  `report_file` includes folder-relative context, metadata, the text sample, evidence,
+  errors, and any review flag. `report_product` lists its files with dispositions.
+  `report_line` lists its products.
+- **Pending changes:** every report response carries a top-level `pending_changes`
+  field, computed by the path function over files whose current location differs from
+  their target, with a breakdown by disposition. This is what tells the user when to
+  run `reorganize`.
+- **Folder-grouped view of unfiled files** is a documented query, not a report field.
+  The read-only SQL tool already covers it, since the parent folder is derivable. The
+  schema-discovery tool ships a few named example queries: unfiled files by folder,
+  files needing enrichment, and open review flags.
+
+## Open
+
+Nothing remains open in the schema design. Exact field names in the report responses
+are settled at implementation time. `intent.md` has no open questions either; the ones
+it carried (deterministic grouping, throughput, what triggers `reorganize`) are settled
+there.

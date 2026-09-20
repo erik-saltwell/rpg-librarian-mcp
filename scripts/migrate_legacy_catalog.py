@@ -65,12 +65,14 @@ from pathlib import Path
 
 import fitz
 import litellm
+from rpg_librarian_tools.barcode import find_isbn_or_issn_barcode
+from rpg_librarian_tools.isbn import isbn, issn
+from rpg_librarian_tools.text_extraction import barcode_sample_pages
 from sqlmodel import col, select
 
 from rpg_librarian_mcp.catalog import Catalog, load_env
 from rpg_librarian_mcp.commands.UpdateCatalogCommand import UpdateCatalogCommand
 from rpg_librarian_mcp.db import session_scope
-from rpg_librarian_mcp.isbn import isbn, issn
 from rpg_librarian_mcp.llm.pdf_judgment import PdfLlmJudgment, judge_pdf_contents
 from rpg_librarian_mcp.metadata.extractors.pdf_extractor import PdfExtractor
 from rpg_librarian_mcp.model import (
@@ -81,8 +83,6 @@ from rpg_librarian_mcp.model import (
     ProcessingStage,
 )
 from rpg_librarian_mcp.progress import ProgressUpdate
-from rpg_librarian_mcp.tools.barcode import find_isbn_or_issn_barcode
-from rpg_librarian_mcp.tools.text_extraction import barcode_sample_pages
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("migrate_legacy_catalog")

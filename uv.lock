@@ -2,6 +2,21 @@ version = 1
 revision = 3
 requires-python = ">=3.14"
 
+[manifest]
+members = [
+    "rpg-librarian-mcp",
+    "rpg-librarian-tools",
+]
+
+[manifest.dependency-groups]
+dev = [
+    { name = "pre-commit", specifier = ">=4.6.0" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "ruff", specifier = ">=0.15.22" },
+    { name = "ty", specifier = ">=0.0.61" },
+]
+
 [[package]]
 name = "aiofile"
 version = "3.11.1"
@@ -1899,11 +1914,10 @@ wheels = [
 [[package]]
 name = "rpg-librarian-mcp"
 version = "0.1.0"
-source = { editable = "." }
+source = { editable = "packages/rpg-librarian-mcp" }
 dependencies = [
     { name = "alembic" },
     { name = "fastmcp" },
-    { name = "httpx" },
     { name = "isbnlib" },
     { name = "jinja2" },
     { name = "litellm" },
@@ -1915,35 +1929,21 @@ dependencies = [
     { name = "pymediainfo" },
     { name = "pymupdf" },
     { name = "pypdfium2" },
-    { name = "pytesseract" },
-    { name = "python-barcode" },
     { name = "python-dotenv" },
-    { name = "python-magic" },
     { name = "pyyaml" },
-    { name = "requests" },
     { name = "rich" },
+    { name = "rpg-librarian-tools" },
     { name = "scipy" },
     { name = "setuptools" },
     { name = "sqlmodel" },
     { name = "structlog" },
     { name = "trimesh" },
-    { name = "zxing-cpp" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-    { name = "ty" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.18.5" },
     { name = "fastmcp", specifier = ">=3.0" },
-    { name = "httpx", specifier = ">=0.27" },
     { name = "isbnlib", specifier = ">=3.10.14" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "litellm", specifier = ">=1.60" },
@@ -1955,28 +1955,44 @@ requires-dist = [
     { name = "pymediainfo", specifier = ">=7.0.1" },
     { name = "pymupdf", specifier = ">=1.28.0" },
     { name = "pypdfium2", specifier = ">=5.12.1" },
-    { name = "pytesseract", specifier = ">=0.3.13" },
-    { name = "python-barcode", specifier = ">=0.16.1" },
     { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "python-magic", specifier = ">=0.4.27" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "requests", specifier = ">=2.32" },
     { name = "rich", specifier = ">=13.9" },
+    { name = "rpg-librarian-tools", editable = "packages/rpg-librarian-tools" },
     { name = "scipy", specifier = ">=1.16.2" },
     { name = "setuptools", specifier = ">=80.0,<82" },
     { name = "sqlmodel", specifier = ">=0.0.39" },
     { name = "structlog", specifier = ">=26.1.0" },
     { name = "trimesh", specifier = ">=4.12.2" },
-    { name = "zxing-cpp", specifier = ">=3.1.1" },
 ]
 
-[package.metadata.requires-dev]
-dev = [
-    { name = "pre-commit", specifier = ">=4.6.0" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
-    { name = "ruff", specifier = ">=0.15.22" },
-    { name = "ty", specifier = ">=0.0.61" },
+[[package]]
+name = "rpg-librarian-tools"
+version = "0.1.0"
+source = { editable = "packages/rpg-librarian-tools" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "pymupdf" },
+    { name = "pytesseract" },
+    { name = "python-barcode" },
+    { name = "python-magic" },
+    { name = "requests" },
+    { name = "zxing-cpp" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pillow", specifier = ">=12.3.0" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pymupdf", specifier = ">=1.28.0" },
+    { name = "pytesseract", specifier = ">=0.3.13" },
+    { name = "python-barcode", specifier = ">=0.16.1" },
+    { name = "python-magic", specifier = ">=0.4.27" },
+    { name = "requests", specifier = ">=2.32" },
+    { name = "zxing-cpp", specifier = ">=3.1.1" },
 ]
 
 [[package]]
