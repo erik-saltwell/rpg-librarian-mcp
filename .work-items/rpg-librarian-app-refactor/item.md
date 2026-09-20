@@ -1,6 +1,6 @@
 ---
 name: "Refactor rpg-librarian to new app"
-status: fleshing-out
+status: planning
 ---
 
 # Refactor rpg-librarian to new app
@@ -21,25 +21,21 @@ CLI true-up.
   path, derived folders, roots and trash, file columns, scan skip rule, per-media
   metadata, aliases, and the `update_product` and read surface. Nothing open.
   Supplements the intent; its changes to the intent are already reconciled into it.
+- [plan.md](plan.md) — phased implementation plan: scaffold, catalog and migrations,
+  `scan`, `enrich`, MCP surface and `update_product`, `reorganize`, v1 removal. Lists
+  the v1 code to port and the agreed decisions. `enrich` includes a simple Google search
+  per file, fetched through Serper.dev.
 
 ## Resume note
 
-Intent is saved and covers the settled architecture. It has been reconciled with
-`catalog-schema.md` (`vtt packs`, LLM-creatable types and lines, `update_product`
-creation rules, `missing_since` for moved files) and links to it. The root
-`pyproject.toml` is partly wired for `apps/rpg-librarian` (workspace and ruff; the
-ty and pytest entries wait for the app skeleton, see the intent's Constraints). Next
-is planning; notes:
+Status is `planning`; `plan.md` is saved and unimplemented. The catalog location
+(`./catalog.db`, with `--catalog` / `RPG_LIBRARIAN_CATALOG` overrides) and the other
+plan unknowns are agreed, and Google search will use Serper.dev (`SERPER_API_KEY`;
+confirm the key returns results before Phase 3). Begin at Phase 0. Notes:
 
 1. **No rubric exists, by decision.** The user has chosen not to define one for this
-   item. The workflow's rubric gap is therefore acknowledged and accepted, not
-   pending: proceed to planning without one, and do not report numerical quality
-   scores for this item. Revisit only if the user asks.
-2. **`intent.md` has no open questions left.** Deterministic grouping was declined,
-   throughput accepted as a limitation (folder structure is exposed to the LLM as
-   evidence), `reorganize` is CLI-only, and the `vtt` question is resolved. The
-   disposition model has been ratified. The schema's open list is also complete:
-   roots and `.trash/` location, core `file` columns, scan skip rule, per-media
-   tables, aliases, the `update_product` signature, and the reads (including
-   `pending_changes`) are all recorded in `catalog-schema.md`. Only exact report
-   field names are left, for implementation time.
+   item. Proceed without one and do not report numerical quality scores for it.
+2. **Design is fully settled** in `intent.md` and `catalog-schema.md`; neither has open
+   questions. Only exact report field names are left to implementation.
+3. **Root `pyproject.toml`** is wired for the uv workspace and ruff; the ty and pytest
+   entries are Phase 0 work because ty errors on a missing root.

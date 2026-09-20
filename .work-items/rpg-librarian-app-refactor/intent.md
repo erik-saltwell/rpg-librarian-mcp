@@ -160,7 +160,7 @@ than a question posed to the LLM.
 | `init` | Creates the local catalog, registers the library root |
 | `add-source` | Registers a staging root (a dump folder) |
 | `scan` | Walks a root recording path/mtime/size; per file copies local, then hashes, detects media, extracts PDF text/OCR, reads barcodes and embedded metadata, then deletes the local copy. Idempotent — skips files unchanged by path+mtime+size. Also hash-joins against the whole catalog to flag exact duplicates. |
-| `enrich` | Separate verb because it is rate-limited and fails differently: DriveThruRPG / RPGGeek / Google lookups and any LLM extraction, stored as candidate evidence |
+| `enrich` | Separate verb because it is rate-limited and fails differently: DriveThruRPG / RPGGeek / ISBN lookups, a simple Google search per file (top five hits stored as candidate evidence), and any LLM extraction |
 | `reorganize` | Renders the whole catalog onto the share: moves files to their computed paths, routes non-kept files aside. Supports `--dry-run`. Writes only bookkeeping (current path, `last_seen_at`), never product assignments. CLI-only. |
 
 ### Typical flow

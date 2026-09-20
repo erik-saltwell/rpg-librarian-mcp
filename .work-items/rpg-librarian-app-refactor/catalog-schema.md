@@ -43,6 +43,7 @@ into it, and are kept here as a record of where the schema design changed it.
 | `file_text` | file (PDFs) | `scan` |
 | `file_llm_extraction` | file | `enrich` |
 | other per-source evidence tables | file, per source (DriveThruRPG, RPGGeek, ISBN) | `enrich` |
+| `google_search_result` | file | `enrich` |
 | `error` | file and stage | `scan`, `enrich` |
 | `review_flag` | LLM deferral on a file | `update_product` / session |
 
@@ -238,6 +239,17 @@ table with one row per file, and each records provenance (which query, when fetc
 Product-level facts (publisher, year, artists, description) are written onto the
 product by the LLM using that evidence. A shared polymorphic evidence table was
 rejected: it gives up foreign-key integrity for a case that does not arise.
+
+### Google search results
+
+A simple Google search is one more `enrich` source, fetched through Serper.dev, so the
+results are Google's. `google_search_result` has one row
+per file: the `query` used, `results` as a JSON list of the top five hits (title, URL,
+snippet), and `fetched_at`. A file whose query returns nothing still gets a row, so it
+is not queried again. The query is built deterministically (an identified ISBN, else
+the embedded title, else the filename stem with its parent folder name) and stored with
+the results. Like all evidence it attaches to the file only and is candidate evidence for
+the LLM, never an asserted identification.
 
 ### Extracted text
 
