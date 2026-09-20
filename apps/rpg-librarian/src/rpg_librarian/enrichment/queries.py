@@ -10,6 +10,7 @@ from pathlib import PurePosixPath
 
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _SEPARATORS = re.compile(r"[_\-\s]+")
+_PUNCTUATION = re.compile(r"[^\w\s]")
 _MIN_QUERY_LENGTH = 3
 MAX_ATTEMPTS = 4  # requests per file per source, at most
 
@@ -40,6 +41,13 @@ def name_query(context: FileContext) -> str:
     if path.parent.name:
         parts.append(_words(path.parent.name))
     return " ".join(part for part in parts if part)
+
+
+def comparable_name(name: str) -> str:
+    """A name reduced for equality checks: case, punctuation, and `&` versus `and`
+    are ignored, so "Blood & Bone" and "Blood and Bone" compare equal."""
+    folded = name.casefold().replace("&", " and ")
+    return " ".join(_PUNCTUATION.sub(" ", folded).split())
 
 
 def name_ladder(context: FileContext) -> list[str]:

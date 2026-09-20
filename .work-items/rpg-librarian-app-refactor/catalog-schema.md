@@ -249,8 +249,8 @@ table with one row per file (`file_id` is the primary key), and every table has 
 three columns after the key: `query` (what was asked), `results` (a JSON list of what
 came back), and `fetched_at`. The tables are `dtrpg_result` (top five products: id,
 title, description, publisher, authors, game system), `rpggeek_result` (up to five
-candidates; the first also carries description, systems, categories, designers, and
-publishers), `isbn_result` (at most one record, with the provider that found it), and
+candidates; the first, and any other whose name equals the query, up to three, also carry
+description, systems, categories, designers, and publishers), `isbn_result` (at most one record, with the provider that found it), and
 `google_search_result` (below). A query that finds nothing still writes a row with
 empty `results`, so the file is not asked again; a failure writes an `error` row and no
 evidence row, so it is retried. Product-level facts (publisher, year, artists,

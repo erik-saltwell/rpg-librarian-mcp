@@ -21,7 +21,10 @@ from ..request_policy import DEFAULT_REQUEST_POLICY, RequestPolicy
 
 log = logging.getLogger(__name__)
 
-_BASE_URL = "https://rpggeek.com/xmlapi2"
+# RPGGeek shares BoardGameGeek's database and API. rpggeek.com itself answers API
+# calls with a Cloudflare bot challenge (HTTP 403) whatever the token, so requests go
+# to the boardgamegeek.com host, which serves `type=rpgitem` directly.
+_BASE_URL = "https://boardgamegeek.com/xmlapi2"
 type QueryValue = str | int | float | None
 
 
@@ -70,6 +73,11 @@ class _RpgGeekApi:
                 await asyncio.sleep(self.policy.minimum_request_interval)
             try:
                 response = await self._http.get(path, params=params)
+                if response.headers.get("cf-mitigated") == "challenge":
+                    raise RemoteServiceError(
+                        "RPGGeek (blocked by a Cloudflare challenge)",
+                        response.status_code,
+                    )
                 if response.status_code in (401, 403):
                     raise AuthenticationError("RPGGeek rejected the bearer token")
                 if response.status_code == 429:

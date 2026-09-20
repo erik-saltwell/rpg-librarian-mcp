@@ -243,9 +243,13 @@ your `.env` keys:
   ISBN, found via Wikidata) and 4 empty results (the catalog's real ISBNs, including
   The Sprawl's `9780473348274`, are not in those services). The earlier error row for the
   file was cleared when it later succeeded.
-- **rpggeek:** your `RPGGEEK_BEARER_TOKEN` is rejected; the source recorded one error row
-  and stopped, as designed. Unauthenticated calls are also rejected. So this source has
-  **not** been exercised against real results.
+- **rpggeek:** first run: the source stopped after one file, reporting the bearer token
+  rejected. **That diagnosis was wrong.** `rpggeek.com` answers API calls with a Cloudflare
+  bot challenge (403, HTML, `cf-mitigated: challenge`) whatever the token, while the same
+  token returns 200 on `boardgamegeek.com/xmlapi2`, which serves `type=rpgitem`. Fixed in
+  the tools package (base URL, and a Cloudflare challenge now reports as a service error
+  instead of "bad token"). Verified live afterwards: 3 of 3 files with results and
+  details, 0 errors.
 - **google:** there is no `SERPER_API_KEY` in `.env`, so the source has **not** been run
   against Serper. The client was checked against a mock transport: request shape (POST,
   `X-API-KEY`, `{"q","num"}`), parsing of `organic`, missing/extra fields, 401, exhausted
@@ -305,7 +309,8 @@ large catalogs (the report and worklist queries load whole tables into Python).
 
 ## Remaining
 
-Phases 5 and 6 in `plan.md`. **Checkpoint 2 first:** a short real session. Note that your
+Phases 5 and 6 in `plan.md`. Still unverified against real results: the `isbn` source
+with a working Google Books key, and the `google` source (Serper). **Checkpoint 2 first:** a short real session. Note that your
 Claude Code config may already register a server named `rpg-librarian` (the v1 server); use
 a different name (the README uses `rpg-librarian-app`) until v1 is removed in Phase 6. **Phase 4's scope changed by agreement after Phase 3:** the
 MCP surface is now nine tools, not six. Added: `list_unfiled` (the worklist; excludes

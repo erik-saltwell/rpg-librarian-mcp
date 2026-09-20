@@ -2,27 +2,32 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Sequence
 
 from rpg_librarian_tools.errors import AuthenticationError, RateLimitError
-from rpg_librarian_tools.rpggeek import get_product, search
+from rpg_librarian_tools.rpggeek import Candidate, get_product, search
 
 from ..model import ProcessingStage, RpggeekResult
 from ..model.core import FileMetadataBase
 from ..observability import log_file_fields
 from .base import FatalSourceError
-from .queries import FileContext, name_ladder, try_queries
+from .queries import FileContext, comparable_name, name_ladder, try_queries
 
 _ENV = "RPGGEEK_BEARER_TOKEN"
 _CANDIDATES = 5
 _MAX_DESCRIPTION = 1000
+_DETAIL_LIMIT = 3  # product lookups per file, at most
 
 
 class RpggeekSource:
     """RPGGeek search: by ISBN when the file has one, then by name.
 
-    The first candidate also carries its product details (publishers, designers,
-    systems). Later candidates carry only id, name, and year, to keep the request
-    count to a search plus one lookup per file.
+    The first candidate always carries its product details (publishers, designers,
+    systems), and so does any other candidate whose name equals the query, up to
+    `_DETAIL_LIMIT`. Ranking often puts a different product first (a newer edition, a
+    namesake), so an exact name match earns a lookup wherever it ranks. The rest carry
+    only id, name, and year, which keeps most files to a search plus one lookup. The
+    LLM session still sees every candidate and makes the call.
     """
 
     name = "rpggeek"
@@ -54,22 +59,34 @@ class RpggeekSource:
                 }
                 for c in candidates
             ]
-            if candidates:
+            for index in _detail_targets(query, candidates):
                 try:
                     details = asyncio.run(
-                        get_product(candidates[0].rpggeek_id, bearer_token=token)
+                        get_product(candidates[index].rpggeek_id, bearer_token=token)
                     )
                 except ValueError:
-                    pass  # the candidate vanished between search and lookup
-                else:
-                    results[0] |= {
-                        "description": (details.description or "")[:_MAX_DESCRIPTION],
-                        "systems": list(details.systems),
-                        "categories": list(details.categories),
-                        "designers": list(details.designers),
-                        "publishers": list(details.publishers),
-                    }
+                    continue  # the candidate vanished between search and lookup
+                results[index] |= {
+                    "description": (details.description or "")[:_MAX_DESCRIPTION],
+                    "systems": list(details.systems),
+                    "categories": list(details.categories),
+                    "designers": list(details.designers),
+                    "publishers": list(details.publishers),
+                }
         except (AuthenticationError, RateLimitError) as error:
             raise FatalSourceError(f"RPGGeek: {error!r}") from error
         log_file_fields(rpggeek_query=query)
         return RpggeekResult(query=query, results=results)
+
+
+def _detail_targets(query: str, candidates: Sequence[Candidate]) -> list[int]:
+    """Indexes to look up in full: the first, then exact name matches, capped."""
+    if not candidates:
+        return []
+    wanted = comparable_name(query)
+    exact = [
+        index
+        for index, candidate in enumerate(candidates)
+        if index != 0 and comparable_name(candidate.name) == wanted
+    ]
+    return [0, *exact][:_DETAIL_LIMIT]
