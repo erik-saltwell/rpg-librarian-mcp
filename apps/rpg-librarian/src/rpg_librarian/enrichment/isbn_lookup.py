@@ -21,15 +21,22 @@ import os
 import time
 import urllib.error
 import urllib.request
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 
-import isbnlib
-from isbnlib.dev import DataNotFoundAtServiceError, ISBNLibHTTPError
-from isbnlib.dev.webquery import query as _webquery
-
 from ..observability import log_call_fields, log_file_fields
+
+# isbnlib imports `pkg_resources`, which warns on every import. The warning is the
+# library's, not ours to act on (setuptools is pinned below 82 for exactly this).
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore", message="pkg_resources is deprecated", category=UserWarning
+    )
+    import isbnlib
+    from isbnlib.dev import DataNotFoundAtServiceError, ISBNLibHTTPError
+    from isbnlib.dev.webquery import query as _webquery
 
 # Tried in order until one returns a match: Google Books (only if
 # GOOGLE_BOOKS_API_KEY is set -- see _providers()), then Open Library, then

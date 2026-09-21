@@ -49,4 +49,8 @@ testpaths = [
     "apps/rpg-librarian/tests",
 ]
 asyncio_mode = "auto"
+filterwarnings = [
+    # isbnlib imports pkg_resources, which warns; the library's, not ours to fix.
+    "ignore:pkg_resources is deprecated:UserWarning",
+]
 addopts = "--basetemp=.pytest-tmp"
