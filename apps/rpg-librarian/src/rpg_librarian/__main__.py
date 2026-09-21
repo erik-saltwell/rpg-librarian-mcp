@@ -152,10 +152,8 @@ def main() -> None:
     if catalog_path.exists():
         configure_wide_event_logs(catalog_path)
     try:
-        with CallTracker(args.command, transport="cli") as tracker:
-            tracker.fields["arguments"] = {
-                k: str(v) for k, v in vars(args).items() if k != "command"
-            }
+        arguments = {k: str(v) for k, v in vars(args).items() if k != "command"}
+        with CallTracker(args.command, transport="cli", arguments=arguments):
             code = handler(args, catalog_path)
     except UsageError as error:
         print(f"error: {error}", file=sys.stderr)

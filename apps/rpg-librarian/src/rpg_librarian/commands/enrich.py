@@ -34,12 +34,14 @@ from ..model import (
     Root,
 )
 from ..model.core import FileMetadataBase
-from ..observability import FileTracker, log_call_fields, log_file_fields
+from ..observability import FileTracker, log_call_fields
 from ..progress import track
 
 
 @dataclass
 class SourceStats:
+    eligible: int = 0
+    removed: int = 0  # stale rows dropped by --force
     attempted: int = 0
     with_results: int = 0
     empty: int = 0
@@ -74,6 +76,7 @@ def _eligible(session: Session, source: Source, force: bool) -> list[FileContext
                 relative_path=file.relative_path,
                 title=metadata.title if metadata else None,
                 isbn=text.isbn if text else None,
+                media_type=file.media_type.value if file.media_type else None,
                 sample_pages=(text.sample_pages or {}) if text else None,
             )
         )
@@ -97,7 +100,22 @@ def _run_source(
         stats.skipped_reason = reason
         return stats
 
-    contexts = [c for c in _eligible(session, source, args.force) if source.wants(c)]
+    everything = _eligible(session, source, args.force)
+    contexts = [c for c in everything if source.wants(c)]
+    if args.force:
+        # A source's rules can change. Rows it holds for files it no longer wants
+        # (evidence from an earlier, noisier rule) are stale: drop them.
+        for context in everything:
+            stale = (
+                None
+                if source.wants(context)
+                else session.get(source.table, context.file_id)
+            )
+            if stale is not None:
+                session.delete(stale)
+                stats.removed += 1
+        session.commit()
+    stats.eligible = len(contexts)
     if args.limit is not None:
         contexts = contexts[: args.limit]
 
@@ -105,8 +123,9 @@ def _run_source(
         for index, context in enumerate(contexts, start=1):
             stats.attempted += 1
             try:
-                with FileTracker(context.file_id, Path(context.path)):
-                    log_file_fields(source=source.name)
+                with FileTracker(
+                    context.file_id, Path(context.path), source=source.name
+                ):
                     row = source.fetch(context)
             except FatalSourceError as error:
                 record_error(session, context.file_id, source.stage, error)
@@ -149,6 +168,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         print(
             f"{name}: {stats.attempted} attempted, {stats.with_results} with results, "
             f"{stats.empty} empty, {stats.errors} errors"
+            + (f", {stats.removed} stale removed" if stats.removed else "")
         )
         if stats.stopped_reason:
             print(f"  warning: {name} stopped early: {stats.stopped_reason}")

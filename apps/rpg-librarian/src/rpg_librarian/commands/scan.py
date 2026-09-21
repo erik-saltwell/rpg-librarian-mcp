@@ -61,6 +61,7 @@ from ..observability import (
     log_call_fields,
     log_file_fields,
     log_file_skipped,
+    mark_file_error,
 )
 from ..paths import TRASH_DIRNAME
 from ..progress import track
@@ -119,6 +120,10 @@ class Scanner:
         self.pool = pool
         self.force = force
         self.stats = ScanStats()
+        # The current file's temporary copy and its real path, so error text can
+        # name the file on the share instead of a throwaway local path.
+        self._local_copy = ""
+        self._share_path = ""
         self.library_root_id: int | None = None
 
     # -- roots ---------------------------------------------------------------
@@ -185,13 +190,29 @@ class Scanner:
             existing.missing_since = None
             self.session.add(existing)
             self.stats.skipped += 1
-            log_file_skipped(existing.id, path)
+            log_file_skipped(existing.id, path, action="unchanged", size_bytes=size)
             return
 
-        with FileTracker(existing.id if existing else None, path) as tracker:
+        with FileTracker(
+            existing.id if existing else None,
+            path,
+            root_id=root.id,
+            size_bytes=size,
+            action=self._action(existing, size, mtime),
+        ) as tracker:
             file = self._process(root, path, relative, size, mtime, existing, local_dir)
             tracker.file_id = file.id
             self.stats.processed += 1
+
+    def _action(self, existing: File | None, size: int, mtime: int) -> str:
+        """Why a file is being processed, for its log event."""
+        if existing is None:
+            return "new"
+        if self.force:
+            return "forced"
+        if existing.size_bytes != size or existing.mtime != mtime:
+            return "changed"
+        return "retry"  # unchanged, but it failed last time
 
     def _can_skip(self, existing: File, size: int, mtime: int) -> bool:
         if self.force:
@@ -219,6 +240,7 @@ class Scanner:
     ) -> File:
         now = datetime.now(UTC)
         local = local_dir / path.name
+        self._local_copy, self._share_path = str(local), str(path)
         try:
             try:
                 shutil.copyfile(path, local)
@@ -364,8 +386,20 @@ class Scanner:
         self, file: File, stage: ProcessingStage, error: Exception
     ) -> None:
         assert file.id is not None
-        text = record_error(self.session, file.id, stage, error)
+        text = record_error(self.session, file.id, stage, error).replace(
+            self._local_copy, self._share_path
+        )
+        self._store_error_text(file.id, stage, text)
         log_file_fields(**{f"error_{stage.value}": text[:200]})
+        mark_file_error(text)
+
+    def _store_error_text(
+        self, file_id: int, stage: ProcessingStage, text: str
+    ) -> None:
+        row = self.session.get(Error, (file_id, stage))
+        if row is not None:
+            row.error_text = text
+            self.session.add(row)
 
     def _clear_errors(self, file: File) -> None:
         assert file.id is not None
@@ -401,7 +435,7 @@ class Scanner:
     def _apply_move(
         self, row: File, root: Root, relative: str, size: int, mtime: int, now: datetime
     ) -> File:
-        log_file_fields(moved_from=f"{row.root_id}:{row.relative_path}")
+        log_file_fields(action="moved", moved_from=f"{row.root_id}:{row.relative_path}")
         assert root.id is not None
         row.root_id = root.id
         row.relative_path = relative
@@ -470,6 +504,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
                 if not roots:
                     raise UsageError(f"{wanted} is not a registered root.")
 
+            root_paths = [root.path for root in roots]  # read while the session is open
             scanner = Scanner(session, pool, force=args.force)
             scanner.library_root_id = library.id
             listings = {root.id: scanner.collect(root) for root in roots}
@@ -485,7 +520,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         pool.close()
 
     s = scanner.stats
-    log_call_fields(**{k: v for k, v in vars(s).items() if k != "unreachable_roots"})
+    log_call_fields(**vars(s), roots_scanned=root_paths)
     print(
         f"seen {s.seen}, skipped {s.skipped}, processed {s.processed}, "
         f"moved {s.moved}, duplicates {s.duplicates}, missing {s.missing}, "

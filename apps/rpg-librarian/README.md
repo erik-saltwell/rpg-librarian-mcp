@@ -19,3 +19,14 @@ SQL), and `update_product` (the only writer). The same operations are available 
 command line (`list-unfiled`, `list-types`, `list-lines`, `report-file`, `report-product`,
 `report-line`, `update-product`) and print JSON. Nothing moves on the share until you run
 `reorganize`.
+
+## Logs
+
+Every run appends JSON lines to `logs/events.log`, beside the catalog. A `scan` or
+`enrich` run is a `call_started` line, one `file` line per file (with its outcome), and a
+`call_finished` line with the totals; they share a `call_id`. For example:
+
+```bash
+jq -c 'select(.event=="call_finished") | {command, outcome, seen, processed, errored}' logs/events.log
+jq -c 'select(.event=="file" and .outcome=="error") | {path, source, error_message}' logs/events.log
+```

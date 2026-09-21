@@ -261,6 +261,13 @@ that does not arise.
 Evidence is dropped when a file's content changes (a new hash), and kept across a
 rescan that finds the same bytes.
 
+**Catalog searches are for product documents only.** DriveThruRPG and RPGGeek search only
+PDFs that are not `.ai` files. Audio, meshes, images, plain text, and `.ai` maps are pieces
+of a pack: a search on "Battle 1" or "Handle_Long" finds unrelated products, and the
+top-level folder of a pack is often a category, so the ladder below would settle on it
+("system agnostic" matched one unrelated product for about 26 files). `enrich --force`
+removes a source's stale rows for files it no longer wants.
+
 **Catalog searches use a query ladder.** DriveThruRPG and RPGGeek match on *every*
 word, so a query padded with an author or a generic folder ("Fasano Blood And Bone Core
 Rules") finds nothing where the bare product name ("Blood and Bone") finds it. Both
@@ -273,13 +280,28 @@ keeps the single rule below.
 ### Google search results
 
 A simple Google search is one more `enrich` source, fetched through Serper.dev, so the
-results are Google's. `google_search_result` has one row
-per file: the `query` used, `results` as a JSON list of the top five hits (title, URL,
-snippet), and `fetched_at`. A file whose query returns nothing still gets a row, so it
-is not queried again. The query is built deterministically (an identified ISBN, else
-the embedded title, else the filename stem with its parent folder name) and stored with
-the results. Like all evidence it attaches to the file only and is candidate evidence for
-the LLM, never an asserted identification.
+results are Google's. `google_search_result` has one row per file: the `query` used,
+`results` as a JSON list of the top five hits (title, URL, snippet), and `fetched_at`. A
+file whose query returns nothing still gets a row, so it is not queried again. Like all
+evidence it attaches to the file only and is candidate evidence for the LLM, never an
+asserted identification.
+
+The query is built deterministically and stored with the results:
+
+1. An identified ISBN, else
+2. the embedded title, else the filename stem with its parent folder name, and
+3. for a **product document** (a PDF that is not an `.ai`), the top-level folder name is
+   appended when the query does not already contain it.
+
+Three details, each found by comparing live results on real files. An embedded title that
+ends in a file extension (`interior.indd`) is ignored, as a tool artifact. A DriveThruRPG
+order id in the filename (`Play_Dirty_(8113103)`) is stripped. A parent folder that only
+repeats the filename is dropped. Step 3 is limited to product documents because it cuts
+both ways: when the top-level folder is a product ("Daring Comics Role-Playing Game"),
+appending it turns generic titles ("Series Worksheet" found algebra worksheets) into the
+right game, but when it is a category ("system agnostic", "Maps") it drowns the query
+("Battle 1 system agnostic" found discussions of system-agnostic rules instead of the
+soundtrack).
 
 ### Extracted text
 

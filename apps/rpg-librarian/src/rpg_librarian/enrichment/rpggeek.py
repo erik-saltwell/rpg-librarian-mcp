@@ -11,7 +11,13 @@ from ..model import ProcessingStage, RpggeekResult
 from ..model.core import FileMetadataBase
 from ..observability import log_file_fields
 from .base import FatalSourceError
-from .queries import FileContext, comparable_name, name_ladder, try_queries
+from .queries import (
+    FileContext,
+    comparable_name,
+    is_product_document,
+    name_ladder,
+    try_queries,
+)
 
 _ENV = "RPGGEEK_BEARER_TOKEN"
 _CANDIDATES = 5
@@ -20,7 +26,7 @@ _DETAIL_LIMIT = 3  # product lookups per file, at most
 
 
 class RpggeekSource:
-    """RPGGeek search: by ISBN when the file has one, then by name.
+    """RPGGeek search for product documents (PDFs): by ISBN, then by name.
 
     The first candidate always carries its product details (publishers, designers,
     systems), and so does any other candidate whose name equals the query, up to
@@ -39,7 +45,7 @@ class RpggeekSource:
         return None if os.environ.get(_ENV) else f"{_ENV} is not set"
 
     def wants(self, context: FileContext) -> bool:
-        return True
+        return is_product_document(context)
 
     def fetch(self, context: FileContext) -> FileMetadataBase | None:
         token = os.environ.get(_ENV)

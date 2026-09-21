@@ -54,7 +54,7 @@ the server with Claude Code and file a few products (see the app README). **Manu
   extractors and `MetadataExtractor` (imports retargeted; SVG now routed by the
   `vector` media type, which is what the tools package actually reports),
   `observability.py` (renamed entry → file; logs live in `logs/` beside the catalog
-  as `calls.log` and `files.log`; the MCP middleware waits for Phase 4), and
+  as `calls.log` and `files.log`, later replaced by the single `events.log`, see "Logging" below), and
   `progress.py` (synchronous rich bar).
 - `infrastructure/walk.py`: skips dotfiles, `.trash`, and `agents.md`/`claude.md`.
 - `commands/scan.py`: `Scanner` with `collect` → `mark_missing` (all reachable roots,
@@ -112,7 +112,7 @@ stage relabelled, downgrade restores the old names) and by `check_migrations.py`
   matching, nearest-name suggestions, near-match warnings), `serialize.py`. Pure functions
   over a session; both front doors call them.
 - `server/`: FastMCP stdio server (`tools.py` with LLM-facing tool descriptions,
-  `middleware.py` logging every call to `calls.log` with transport `mcp`, workflow
+  `middleware.py` logging every call to `events.log` with transport `mcp`, workflow
   `INSTRUCTIONS` in `__init__.py`). It migrates the catalog once at startup and opens
   sessions with `migrate=False` per call. The banner and PyPI update check are off.
 - Nine tools: `list_unfiled`, `list_product_types`, `list_product_lines`, `report_file`,
@@ -123,6 +123,59 @@ stage relabelled, downgrade restores the old names) and by `check_migrations.py`
   tracker.
 - `paths.py`: trash buckets and `desired_trash_path`, shared with Phase 5.
 - Dependency added: fastmcp.
+
+**Logging: one event stream, `logs/events.log`** (after Phase 4, uncommitted)
+
+The wide-event logs now follow one pattern for batch verbs, so a run reads top to bottom:
+
+1. `call_started`: once, when the verb begins, with its arguments.
+2. `file`: exactly one per file handled (`success`, `error`, or `skipped`), carrying
+   everything known about it: path, duration, hashes, page counts, `action` (`new`,
+   `changed`, `retry`, `forced`, `moved`, `unchanged`), the enrich `source`, and the error.
+3. `call_finished`: once, when the verb ends, with totals and `outcome`. Written on failure
+   and on Ctrl-C too, so a dying run says how it ended. A `call_started` with no
+   `call_finished` means the process was killed hard. `enrich` totals are per source
+   (`eligible`, `attempted`, `with_results`, `empty`, `errors`, `stopped_reason`,
+   `skipped_reason`).
+
+An MCP tool call is a single `call_finished` event (no start, no per-file events).
+Trade-off accepted: the old separate `started` line per file is gone, so if a run hangs,
+the log no longer names the file in flight (the progress bar does; the last `file` event
+names the last file *finished*).
+
+Found by auditing your real logs: no start entry existed for any verb, files had two lines
+each (110 for 55), the `started` lines carried no `source` (useless for `enrich`), and an
+interrupted `enrich` run left a dangling `started` with nothing to say the run had begun or
+died. Fixed along the way: a file whose extraction failed without raising was logged
+`success` (it is now `error`); an errored file being retried was labelled `changed` (now
+`retry`); a moved file was `new` (now `moved`); and scan error text, which is also stored in
+the `error` table, named the throwaway local copy (`/tmp/rpg-librarian-scan-…`) instead of
+the file on the share. Verified on scratch shares (three scan runs: new, unchanged,
+hand-moved; a corrupt file, a duplicate) and with fake `enrich` sources (success, empty,
+failure, fatal stop, Ctrl-C), plus one real MCP session.
+
+**Enrich query quality, after reviewing your real run** (uncommitted)
+
+Reviewing the 55-file enrich run found two kinds of noise, both now fixed:
+
+- **Junk hits from category folders.** DriveThruRPG and RPGGeek's ladder fell back to
+  top-level folder names, so "system agnostic" returned the same unrelated product for ~26
+  audio, mesh, and text files and "Maps" did for the six `.ai` files. These sources now run
+  only for product documents: PDFs that are not `.ai`. That is 20 of the 55 files, down from
+  55, which also saves API time.
+- **Google queries built from junk or generic titles** ("Sheet1-1", "interior.indd",
+  "Series Worksheet"). For product documents the top-level folder is now appended. Live
+  comparison of three candidate rules on eight representative files showed the append is a
+  big win when that folder is a product and harmful when it is a category, which is why it
+  is limited to product documents. My earlier recommendation ("append it always") was wrong
+  for pack files and was narrowed on that evidence.
+- Also: an embedded title ending in a file extension is ignored; DriveThruRPG order ids
+  (`(8113103)`) are stripped from filename stems; a parent folder that repeats the filename is
+  dropped. `enrich --force` now also removes a source's stale rows for files it no longer
+  wants.
+- Known remaining weakness: four `BattlfinderAm* copy.pdf` map PDFs in a `Maps` folder still
+  count as product documents (they are PDFs), and a category-named top-level folder above a
+  real product (`system agnostic/pdf/John Wick Presents/Play Dirty`) is still appended.
 
 ## Deviations from the plan and schema doc
 
@@ -208,7 +261,7 @@ SVG, a WAV, an STL, a dotfile, and a `.trash/` folder). Tesseract is installed l
   WAV 1.0 s, STL 10×20×30 mm). ISBN `9780306406157` found in the text sample; the
   sample holds pages 1–5 and 7–8. The dump copy of the PDF became `duplicate` of the
   library copy. The dotfile and `.trash/` were not walked. No temp directory was left.
-  `logs/calls.log` and `logs/files.log` were written with the expected fields.
+  `logs/calls.log` and `logs/files.log` (since replaced by `events.log`) were written with the expected fields.
 - Re-scan: 7 skipped. Touching one mtime: exactly 1 reprocessed. `--force`: all 7.
 - Move by hand within the dump, and dump → library: both recognised as moves (row keeps
   its id and disposition, path updated), not duplicates.
@@ -297,7 +350,7 @@ Against copies of your `.test` catalog (yours was not modified):
   correct schemas (the `disposition` enum, `file_ids` required); every tool called; errors
   arrive as tool errors with the same messages; `query` rejected `delete`, `drop`,
   `pragma`, a second statement, and a `WITH ... DELETE` (refused by SQLite itself), and
-  capped 2,000 rows at 500 with `truncated`; every call was logged to `calls.log` with
+  capped 2,000 rows at 500 with `truncated`; every call was logged to the event stream with
   transport `mcp`; the server exits within seconds of the client disconnecting; its stderr
   has no banner and no network update check.
 - **CLI mirrors:** exit 0 with JSON, exit 1 with a message on stderr; files filed through

@@ -11,6 +11,10 @@ from pathlib import PurePosixPath
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _SEPARATORS = re.compile(r"[_\-\s]+")
 _PUNCTUATION = re.compile(r"[^\w\s]")
+# A title ending in a file extension ("interior.indd") is a tool artifact, not a title.
+_EXTENSION_SUFFIX = re.compile(r"\.[A-Za-z0-9]{2,5}$")
+# DriveThruRPG downloads carry the order id in the filename: "Play_Dirty_(8113103)".
+_STORE_ORDER_ID = re.compile(r"\s*\(\d{6,}\)")
 _MIN_QUERY_LENGTH = 3
 MAX_ATTEMPTS = 4  # requests per file per source, at most
 
@@ -24,6 +28,7 @@ class FileContext:
     relative_path: str
     title: str | None = None
     isbn: str | None = None
+    media_type: str | None = None  # the `MediaType` value, e.g. "pdf"
     # None: the file has no `file_text` row (not a PDF, or unreadable).
     sample_pages: dict[str, str] | None = None
 
@@ -32,15 +37,46 @@ def _words(text: str) -> str:
     return _SEPARATORS.sub(" ", _CAMEL_BOUNDARY.sub(" ", text)).strip()
 
 
+def _stem_words(relative_path: str) -> str:
+    return _words(_STORE_ORDER_ID.sub("", PurePosixPath(relative_path).stem))
+
+
+def _usable_title(title: str | None) -> str:
+    cleaned = (title or "").strip()
+    return "" if _EXTENSION_SUFFIX.search(cleaned) else cleaned
+
+
+def is_product_document(context: FileContext) -> bool:
+    """A file that can itself be a product's book or sheet: a PDF that is not an `.ai`.
+
+    Audio, meshes, images, plain text, and `.ai` maps are pieces of a pack. Searching
+    for one by its own name ("Battle 1", "Handle_Long") finds unrelated products, and
+    the top-level folder of a pack is often a category ("system agnostic", "Maps"),
+    not a product, so it cannot be trusted as a search term for them.
+    """
+    return context.media_type == "pdf" and not context.relative_path.lower().endswith(
+        ".ai"
+    )
+
+
+def top_level_folder(context: FileContext) -> str:
+    parts = PurePosixPath(context.relative_path).parts
+    return _words(parts[0]) if len(parts) > 1 else ""
+
+
 def name_query(context: FileContext) -> str:
     """The embedded title, else the filename stem with its parent folder name."""
-    if context.title and context.title.strip():
-        return context.title.strip()
+    title = _usable_title(context.title)
+    if title:
+        return title
     path = PurePosixPath(context.relative_path)
-    parts = [_words(path.stem)]
-    if path.parent.name:
-        parts.append(_words(path.parent.name))
-    return " ".join(part for part in parts if part)
+    stem = _stem_words(context.relative_path)
+    parent = _words(path.parent.name) if path.parent.name else ""
+    # Skip a parent folder that only repeats the filename (or the other way round).
+    repeats = (
+        parent.casefold() in stem.casefold() or stem.casefold() in parent.casefold()
+    )
+    return " ".join(part for part in (stem, "" if repeats else parent) if part)
 
 
 def comparable_name(name: str) -> str:
@@ -59,7 +95,7 @@ def name_ladder(context: FileContext) -> list[str]:
     folder from the top down (a top-level folder is usually the product or line).
     """
     path = PurePosixPath(context.relative_path)
-    candidates = [context.title or "", _words(path.stem)]
+    candidates = [_usable_title(context.title), _stem_words(context.relative_path)]
     candidates += [_words(folder) for folder in path.parent.parts]
     ladder: list[str] = []
     for candidate in candidates:
@@ -86,5 +122,20 @@ def try_queries[T](
 
 
 def google_query(context: FileContext) -> str:
-    """An identified ISBN, else the name query."""
-    return context.isbn or name_query(context)
+    """An identified ISBN, else the name query.
+
+    For a product document the top-level folder (nearly always the product or line) is
+    appended when the query does not already contain it: Google tolerates extra words,
+    and it rescues generic or junk titles ("Series Worksheet", "Sheet1-1").
+    """
+    if context.isbn:
+        return context.isbn
+    query = name_query(context)
+    folder = top_level_folder(context)
+    if (
+        is_product_document(context)
+        and folder
+        and folder.casefold() not in query.casefold()
+    ):
+        query = f"{query} {folder}"
+    return query

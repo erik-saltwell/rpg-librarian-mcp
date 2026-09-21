@@ -10,7 +10,7 @@ from ..model import DtrpgResult, ProcessingStage
 from ..model.core import FileMetadataBase
 from ..observability import log_file_fields
 from .base import FatalSourceError
-from .queries import FileContext, name_ladder, try_queries
+from .queries import FileContext, is_product_document, name_ladder, try_queries
 
 _ENV = "DTRPG_API_KEY"
 _HITS = 5
@@ -18,7 +18,7 @@ _MAX_DESCRIPTION = 1000
 
 
 class DtrpgSource:
-    """DriveThruRPG catalog search by name."""
+    """DriveThruRPG catalog search by name, for product documents (PDFs) only."""
 
     name = "dtrpg"
     stage = ProcessingStage.dtrpg
@@ -28,7 +28,7 @@ class DtrpgSource:
         return None if os.environ.get(_ENV) else f"{_ENV} is not set"
 
     def wants(self, context: FileContext) -> bool:
-        return True
+        return is_product_document(context)
 
     def fetch(self, context: FileContext) -> FileMetadataBase | None:
         queries = name_ladder(context)
