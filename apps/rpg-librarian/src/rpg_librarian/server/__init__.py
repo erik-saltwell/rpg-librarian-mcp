@@ -18,9 +18,10 @@ from .tools import register_tools
 log = logging.getLogger(__name__)
 
 INSTRUCTIONS = """\
-You are filing incoming RPG files into an organized library, working entirely in a
-catalog database. You never read or move files; a person runs `reorganize` later to
-make the share match what you record.
+You are filing incoming RPG files into an organized library. Product judgments are
+recorded in the catalog; a person runs `reorganize` later to make the share match them.
+The `rename-file` tool is the narrow exception: it immediately renames one file in its
+current folder and updates the catalog to match.
 
 Workflow: (1) list_product_types and list_product_lines to learn the vocabulary;
 (2) list_unfiled to see the worklist, and pick a folder; (3) list_unfiled with that

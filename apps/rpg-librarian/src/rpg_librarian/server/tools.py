@@ -14,6 +14,7 @@ from ..db import session_scope
 from ..errors import UsageError
 from ..model import Disposition
 from ..services import lists, reports, schema
+from ..services.rename_file import rename_file
 from ..services.serialize import to_jsonable
 from ..services.update_product import UpdateProductRequest, update_product
 
@@ -183,7 +184,7 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
         review_flag: str | None = None,
         note: str | None = None,
     ) -> dict[str, Any]:
-        """Record your judgment about a set of files. This is the only tool that writes.
+        """Record your judgment about a set of files.
 
         Pass many `file_ids` for one product in one call. It is a single transaction:
         if anything is invalid nothing changes and the error names what failed.
@@ -229,6 +230,21 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
         try:
             with session_scope(db_path, migrate=False) as session:
                 return to_jsonable(_update(session, request))
+        except UsageError as error:
+            raise ToolError(str(error)) from error
+
+    @mcp.tool(name="rename-file")
+    def rename_file_tool(file_id: int, new_name: str) -> dict[str, Any]:
+        """Rename one cataloged file and update its catalog path.
+
+        The file stays in its current source and folder; only its filename changes.
+        Use the `file_id` returned by list_unfiled or report_file. `new_name` must be
+        a filename, not a path. The operation refuses missing files and destination
+        collisions, and does not overwrite anything.
+        """
+        try:
+            with session_scope(db_path, migrate=False) as session:
+                return to_jsonable(rename_file(session, file_id, new_name))
         except UsageError as error:
             raise ToolError(str(error)) from error
 

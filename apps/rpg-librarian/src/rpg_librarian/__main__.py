@@ -5,7 +5,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from .commands import add_source, enrich, init, scan, serve, tools
+from .commands import add_source, enrich, init, reorganize, scan, serve, tools
 from .config import load_env, resolve_catalog_path
 from .enrichment.registry import SOURCES
 from .errors import UsageError
@@ -50,6 +50,7 @@ _HANDLERS: dict[str, Handler] = {
     "list-unfiled": tools.list_unfiled,
     "list-types": tools.list_types,
     "list-lines": tools.list_lines,
+    "reorganize": reorganize.run,
     "serve": serve.run,
 }
 
@@ -125,6 +126,13 @@ def build_parser() -> argparse.ArgumentParser:
     ll.add_argument("--type", dest="product_type")
     ll.add_argument("--search")
     ll.add_argument("--limit", type=int, default=200)
+    ro = verbs["reorganize"]
+    ro.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would move, and change nothing.",
+    )
+    ro.add_argument("--limit", type=int, help="Move at most this many files this run.")
     verbs["scan"].add_argument(
         "--root", type=Path, help="Scan only this registered root (default: all)."
     )

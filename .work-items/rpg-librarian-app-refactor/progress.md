@@ -1,11 +1,23 @@
 # Progress
 
-Current handoff for [plan.md](plan.md). Status: `implementing`. Phases 0 to 4 are
-done; continue at Phase 5 (`reorganize`). **Manual-testing checkpoint 2 is now:** register
+Current handoff for [plan.md](plan.md). Status: `implementing`. Phases 0 to 5 are
+done; continue at Phase 6 (remove v1 and finish). Manual-testing checkpoint 3 is next: run
+`reorganize --dry-run`, then `reorganize`, on a *copy* of a small dump and part of the library. **Manual-testing checkpoint 2 is now:** register
 the server with Claude Code and file a few products (see the app README). **Manual-testing checkpoint 1 is now:** run `init`,
 `add-source`, and `scan` against one real dump on the share before Phase 3 starts.
 
 ## Completed
+
+**MCP `rename-file` tool** (completed 2026-09-22)
+
+- Added `rename-file(file_id, new_name)` to the new app's FastMCP server. It renames
+  only the basename within the file's existing source and folder, updates the catalog,
+  refuses missing/colliding destinations and path-like names, and attempts to restore
+  the disk name if the database commit fails.
+- Verified against a migrated scratch catalog and real scratch files, including path
+  traversal and overwrite rejection; confirmed FastMCP advertises the exact tool name.
+- `uv run ruff check` and `uv run ty check` pass; the complete test suite passes with
+  324 tests.
 
 **Phase 0: app scaffold and tooling** (done, committed as `2218ec2`)
 
@@ -176,6 +188,18 @@ Reviewing the 55-file enrich run found two kinds of noise, both now fixed:
 - Known remaining weakness: four `BattlfinderAm* copy.pdf` map PDFs in a `Maps` folder still
   count as product documents (they are PDFs), and a category-named top-level folder above a
   real product (`system agnostic/pdf/John Wick Presents/Play Dirty`) is still appended.
+
+**Phase 5: `reorganize`** (done, uncommitted)
+
+- `services/placement.py`: `compute_placements` (destination and settled-or-not for every
+  filed file), now used by `pending_changes` too, so reports and dry runs cannot disagree.
+- `commands/reorganize.py` with `--dry-run` and `--limit N`; rules are recorded in
+  `catalog-schema.md` under "What `reorganize` does with the plan".
+- Decisions taken (the defaults offered before building): empty folders are removed;
+  colliding targets are refused for both files; kept files already in the library are
+  moved to their computed location.
+- Logging follows the same start / one-event-per-file / end pattern; file events carry
+  `action` (`moved`, `trashed`, `blocked`), `dest`, and `method` (`rename` or `copy`).
 
 ## Deviations from the plan and schema doc
 
@@ -360,9 +384,48 @@ Against copies of your `.test` catalog (yours was not modified):
 Not exercised: a real LLM session driving the tools (that is manual checkpoint 2), and
 large catalogs (the report and worklist queries load whole tables into Python).
 
+### Phase 5 verification
+
+On a scratch share: a library, `dump_a` on the same volume, and `dump_b` in `/dev/shm`, a
+separate tmpfs, so the cross-volume path ran for real. Products were filed through the real
+`update_product` service. 38 checks, all passing:
+
+- **Dry run:** grouped plan listing 9 moves and 2 blocked, the new top-level folders
+  `games` and `maps`, and *nothing* changed on disk or in the catalog.
+- **Real run:** single-file products in their line folder; a two-file product in a product
+  folder; the cross-volume file copied, verified, and its source removed with no partial
+  file left; duplicate, discard, and superseded files under `.trash/duplicates/`,
+  `.trash/discarded/`, `.trash/superseded/`; two READMEs wanting the same target both
+  refused and left in place; the unfiled file untouched; empty folders removed while the
+  dump root and `.trash` survived; catalog rows repointed into the library.
+- **Idempotent:** a second run moved nothing (9 already in place).
+- **Supersede one of two kept files:** the survivor moved up into the line folder, the other
+  went to the trash, and the emptied product folder was removed.
+- **Changed source:** a file whose modified time no longer matched the scan was flagged and
+  not moved, and moved after a rescan.
+- **Existing destination:** an untracked file at the target was left untouched, and the
+  error row said the destination exists.
+- **Crash recovery:** a hand-moved file was refused as not at its recorded path, `scan`
+  re-identified it as a move (no duplicate), and `reorganize` then found it settled.
+- **Chain:** a file wanting a path held by a file about to move waited its turn; both
+  moved and no content was lost.
+- **`--limit 2`** moved exactly two; the next run finished the rest.
+- **A failed copy verification** (recorded hash deliberately wrong): the source stayed
+  byte-identical, nothing landed at the destination, no partial file remained, an error
+  was recorded, and the catalog row was unchanged.
+- A dry run against a copy of the real session catalog said "nothing to do" (nothing has
+  been filed in it yet).
+
+Found and fixed during verification: a stale `reorganize` error row survived after the file
+it described was fixed and rescanned, because settled files are never revisited. The errors
+are now a per-run snapshot.
+
+Not exercised: a real network mount (SMB rename semantics, timestamp granularity), permission
+errors, and files above a few MB (the copy path re-reads the whole file to verify it).
+
 ## Remaining
 
-Phases 5 and 6 in `plan.md`. Still unverified against real results: the `isbn` source
+Phase 6 in `plan.md`. **Checkpoint 3 first**, on copies. Still unverified against real results: the `isbn` source
 with a working Google Books key, and the `google` source (Serper). **Checkpoint 2 first:** a short real session. Note that your
 Claude Code config may already register a server named `rpg-librarian` (the v1 server); use
 a different name (the README uses `rpg-librarian-app`) until v1 is removed in Phase 6. **Phase 4's scope changed by agreement after Phase 3:** the

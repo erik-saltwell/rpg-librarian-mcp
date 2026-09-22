@@ -157,6 +157,38 @@ the location is stable: applying the function to its own result changes nothing,
 file in the right bucket is never pending. `pending_changes` and `reorganize` both use
 `desired_trash_path`.
 
+### What `reorganize` does with the plan
+
+`services.placement.compute_placements` is the one place that says where each filed file
+belongs and whether it is already there. `pending_changes` and `reorganize` both use it,
+so a report and a dry run agree. Rules, all settled while building it:
+
+- **Nothing is ever overwritten.** A destination that already exists on the share, or that
+  two files both want (compared case-insensitively, since SMB usually is), *blocks* the
+  files involved: each gets an `error` row (stage `reorganize`) naming why, and nothing is
+  renamed to make room. Blocked files still count as pending.
+- **A changed source is flagged, not moved.** The file at the recorded path must still
+  have the size and modified time `scan` recorded; otherwise it changed since the catalog
+  last saw it (run `scan`).
+- **Rename, or copy-verify-delete.** Same volume: a rename. Across volumes: copy to a
+  `.rpg-librarian-partial` file, verify SHA-256 against the recorded hash, atomically
+  replace into place, then delete the source. A failed verification deletes the partial,
+  keeps the source, and records an error.
+- **Chains resolve in order.** A file whose destination is held by another file that is
+  itself about to move is retried after that one moves; a chain that never resolves is
+  blocked.
+- **Empty folders are removed** after the moves, climbing toward (never removing) the
+  root, and never a `.trash` folder or any folder that still holds anything.
+- **`reorganize` errors are a snapshot of the last run:** cleared at the start of each
+  real run and re-derived, so a file fixed by hand and rescanned does not keep a stale one.
+- **A crash between a move and its catalog update** leaves the file at the destination
+  and the row at the old path. `reorganize` reports it as not at its recorded path;
+  `scan` then re-identifies it by hash as a move, and the next `reorganize` finds it
+  settled.
+- **`--dry-run`** prints the plan grouped by action, lists blocked files with reasons and
+  any type folder that does not yet exist under the library ("new top-level folder"), and
+  changes nothing. **`--limit N`** moves at most N files per run.
+
 ### Duplicates and moved files
 
 - `duplicate_of_id` links a duplicate to its original. A library-root copy always wins:

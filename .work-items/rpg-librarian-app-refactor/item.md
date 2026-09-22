@@ -30,10 +30,11 @@ CLI true-up.
 
 ## Resume note
 
-Status is `implementing`; Phases 0 to 4 of `plan.md` are done (see `progress.md`). The catalog location
-(`./catalog.db`, with `--catalog` / `RPG_LIBRARIAN_CATALOG` overrides) and the other
-plan unknowns are agreed, and Google search will use Serper.dev (`SERPER_API_KEY`;
-not yet in `.env`; the rpggeek and Google Books keys are currently rejected, see `progress.md`). Next: manual-testing checkpoint 2 (a real MCP session, see the app README), then Phase 5.
+Status is `implementing`; Phases 0 to 5 of `plan.md` are done (see `progress.md`). The
+catalog location is `./catalog.db` (with `--catalog` / `RPG_LIBRARIAN_CATALOG` overrides).
+All enrichment sources are verified against real services: DriveThruRPG, RPGGeek (through
+the BoardGameGeek host), Google Books, Serper, and the text analysis. Next: manual-testing
+checkpoints 2 (a real MCP filing session) and 3 (`reorganize` on copies), then Phase 6.
 Notes:
 
 1. **No rubric exists, by decision.** The user has chosen not to define one for this

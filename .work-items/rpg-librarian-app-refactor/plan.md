@@ -228,6 +228,9 @@ warning, and that no `product` row exists.
       example queries (needs enrichment, open review flags), and the ported read-only
       SQL tool. Every report carries `pending_changes` computed by the path function
       with a per-disposition breakdown.
+- [x] `rename-file` MCP tool: rename one cataloged file within its current folder and
+      update `file.relative_path`, rejecting missing files, paths, and disk or catalog
+      collisions without overwriting.
 - [x] CLI mirrors of `update_product`, the three reports, and the three list tools so
       the surface can be exercised without an MCP client.
 
@@ -244,17 +247,17 @@ resolves the flag, and confirm `pending_changes` counts the kept files. Then sta
 
 ## Phase 5: `reorganize`
 
-- [ ] Compute desired location for every non-`unfiled` file: `keep` → target path;
+- [x] Compute desired location for every non-`unfiled` file: `keep` → target path;
       `duplicate` / `superseded` / `discard` → `<library>/.trash/<bucket>/` preserving
       the original relative path beneath it to avoid collisions.
-- [ ] `--dry-run` prints every planned move and lists any type folder that does not
+- [x] `--dry-run` prints every planned move and lists any type folder that does not
       yet exist on the share as "new top-level folder".
-- [ ] Before each move verify size+mtime at the recorded source; on mismatch write an
+- [x] Before each move verify size+mtime at the recorded source; on mismatch write an
       `error` row for stage `reorganize` and skip. Same-volume rename where possible;
       otherwise copy, verify by hash, then delete the source. Update `relative_path`,
       `root_id`, and `last_seen_at`; create directories as needed; never delete
       anything except a verified-copied source.
-- [ ] Idempotent: a second run with no catalog changes performs no moves.
+- [x] Idempotent: a second run with no catalog changes performs no moves.
 
 Depends on: Phase 4 (something to move). Outcome: the share matches the catalog and
 the dump folder holds only unfiled files.
