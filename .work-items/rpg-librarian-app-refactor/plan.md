@@ -125,6 +125,9 @@ Verification: `uv sync`, `uv run rpg-librarian --help`, `uv run ty check`,
       Single-file rule counts only `disposition = keep` files of that product.
 - [x] Seed type list as a code constant; `init` creates the catalog, inserts missing
       types idempotently, registers the single `library` root, and refuses a second.
+- [x] Bundle the `process-batch` and `review-items` skills and have `init` seed them
+      into `.claude/skills/`, `.codex/skills/`, and `.gemini/skills/` without replacing
+      an existing local copy.
 - [x] `add-source` inserts a `staging` root, refusing paths nested in or containing an
       existing root; no scan.
 

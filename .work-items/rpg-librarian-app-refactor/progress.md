@@ -8,6 +8,14 @@ the server with Claude Code and file a few products (see the app README). **Manu
 
 ## Completed
 
+**Bundled agent skills** (completed 2026-09-22)
+
+- Packaged `process-batch` and `review-items` as app resources. `init` seeds both
+  skills into the initialized library's `.claude/skills/`, `.codex/skills/`, and
+  `.gemini/skills/` locations, leaving an existing local skill file untouched.
+- Verified a scratch initialization installs all six files, a second run is idempotent,
+  and the built wheel includes both bundled resource files.
+
 **MCP `rename-file` tool** (completed 2026-09-22)
 
 - Added `rename-file(file_id, new_name)` to the new app's FastMCP server. It renames

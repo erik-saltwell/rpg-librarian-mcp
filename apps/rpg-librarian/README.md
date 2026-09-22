@@ -4,6 +4,13 @@ Turns unorganized dumps of RPG content on a network share into an organized libr
 Runs as a CLI (`init`, `add-source`, `scan`, `enrich`, `reorganize`) or as a FastMCP
 stdio server (`serve`). See `.work-items/rpg-librarian-app-refactor/` for the design.
 
+## Agent skills
+
+`init` installs the bundled `process-batch` and `review-items` skills into all three
+project-local agent locations: `.claude/skills/`, `.codex/skills/`, and
+`.gemini/skills/`. Existing local copies are never overwritten, so they may be
+customized safely.
+
 ## Using the MCP server
 
 `rpg-librarian serve` runs the tools on stdio. With Claude Code, from anywhere:

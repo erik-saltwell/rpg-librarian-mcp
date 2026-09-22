@@ -9,6 +9,7 @@ from ..db import session_scope, upgrade
 from ..errors import UsageError
 from ..model import ProductType, Root, RootKind
 from ..product_types import SEED_PRODUCT_TYPES
+from ..skills import install_bundled_skills
 
 
 def run(args: argparse.Namespace, catalog_path: Path) -> int:
@@ -43,4 +44,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
     print(f"Library root: {library}")
     if missing:
         print(f"Added {len(missing)} product type(s): {', '.join(missing)}")
+    installed_skills = install_bundled_skills(library)
+    if installed_skills:
+        print(f"Installed {len(installed_skills)} bundled agent skill file(s).")
     return 0
