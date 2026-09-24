@@ -44,6 +44,9 @@ class RpggeekSource:
         # RPGGeek now rejects unauthenticated calls, so the token is required.
         return None if os.environ.get(_ENV) else f"{_ENV} is not set"
 
+    def begin_run(self) -> None:
+        pass
+
     def wants(self, context: FileContext) -> bool:
         return is_product_document(context)
 

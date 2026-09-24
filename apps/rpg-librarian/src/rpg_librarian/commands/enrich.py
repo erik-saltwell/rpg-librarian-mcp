@@ -100,6 +100,7 @@ def _run_source(
         stats.skipped_reason = reason
         return stats
 
+    source.begin_run()
     everything = _eligible(session, source, args.force)
     contexts = [c for c in everything if source.wants(c)]
     if args.force:

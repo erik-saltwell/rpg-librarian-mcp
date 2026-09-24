@@ -22,6 +22,9 @@ class IsbnSource:
     def unavailable_reason(self) -> str | None:
         return None  # Open Library and Wikidata need no key
 
+    def begin_run(self) -> None:
+        pass
+
     def wants(self, context: FileContext) -> bool:
         return context.isbn is not None
 

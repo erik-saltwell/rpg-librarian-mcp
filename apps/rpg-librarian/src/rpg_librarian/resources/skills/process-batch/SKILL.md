@@ -83,6 +83,8 @@ cannot be identified, defer it with a review flag rather than guessing.
 
 - A product is a set of files that shipped together. The folder path is usually the
   best clue. Search results, ISBN records, and system guesses are hints, not verdicts.
+- Google hits on a map, token, image, audio, or other non-PDF file come from a search
+  for its pack folder, not for the file: they may identify the pack, never the file.
 - Treat one standalone PDF (a core rulebook or adventure) as its own product.
 - Treat standalone map packs, music, sound effects, miniatures, and terrain as their
   own product under a functional type, not under a game.

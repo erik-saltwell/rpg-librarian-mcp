@@ -27,6 +27,9 @@ class DtrpgSource:
     def unavailable_reason(self) -> str | None:
         return None if os.environ.get(_ENV) else f"{_ENV} is not set"
 
+    def begin_run(self) -> None:
+        pass
+
     def wants(self, context: FileContext) -> bool:
         return is_product_document(context)
 

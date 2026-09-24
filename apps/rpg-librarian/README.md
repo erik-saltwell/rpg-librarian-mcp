@@ -28,6 +28,10 @@ command line (`list-unfiled`, `list-types`, `list-lines`, `report-file`, `report
 `report-line`, `update-product`) and print JSON. Nothing moves on the share until you run
 `reorganize`.
 
+`enrich` looks each PDF up on its own. Only Google searches for other files (maps,
+tokens, art, audio), and it searches once per pack (the first three folders below the
+root) rather than once per file: every file in the pack shares that query and its hits.
+
 `reorganize --dry-run` previews the moves, and `reorganize` performs them: filed products go to
 `library/<type>/<line>/[<product>/]<file>`, and duplicates, superseded, and discarded files
 to `library/.trash/<bucket>/`. It never overwrites, refuses files that changed since the

@@ -77,6 +77,9 @@ class TextAnalysisSource:
     def unavailable_reason(self) -> str | None:
         return None  # credentials are litellm's; a bad one stops the source
 
+    def begin_run(self) -> None:
+        pass
+
     def wants(self, context: FileContext) -> bool:
         return context.sample_pages is not None
 

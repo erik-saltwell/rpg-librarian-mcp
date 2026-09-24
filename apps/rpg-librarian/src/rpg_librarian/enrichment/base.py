@@ -39,6 +39,10 @@ class Source(Protocol):
         """Why this source cannot run (a missing credential), else None."""
         ...
 
+    def begin_run(self) -> None:
+        """Reset anything a source remembers from an earlier run."""
+        ...
+
     def wants(self, context: FileContext) -> bool:
         """Whether this file is worth a request for this source."""
         ...

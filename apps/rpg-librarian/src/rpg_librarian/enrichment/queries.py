@@ -17,6 +17,10 @@ _EXTENSION_SUFFIX = re.compile(r"\.[A-Za-z0-9]{2,5}$")
 _STORE_ORDER_ID = re.compile(r"\s*\(\d{6,}\)")
 _MIN_QUERY_LENGTH = 3
 MAX_ATTEMPTS = 4  # requests per file per source, at most
+# A pack is the first folders below the root: `<type>/<line>/<product>` in the library,
+# `<game>/<pack>/<section>` in a dump. Deeper folders split one pack into many.
+PACK_DEPTH = 3
+_MAX_PACK_QUERY_WORDS = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +56,8 @@ def is_product_document(context: FileContext) -> bool:
     Audio, meshes, images, plain text, and `.ai` maps are pieces of a pack. Searching
     for one by its own name ("Battle 1", "Handle_Long") finds unrelated products, and
     the top-level folder of a pack is often a category ("system agnostic", "Maps"),
-    not a product, so it cannot be trusted as a search term for them.
+    not a product, so a strict catalog search cannot use it. Google looks such files
+    up by their pack instead (`pack_query`).
     """
     return context.media_type == "pdf" and not context.relative_path.lower().endswith(
         ".ai"
@@ -77,6 +82,28 @@ def name_query(context: FileContext) -> str:
         parent.casefold() in stem.casefold() or stem.casefold() in parent.casefold()
     )
     return " ".join(part for part in (stem, "" if repeats else parent) if part)
+
+
+def pack_query(context: FileContext) -> str:
+    """The pack a non-document file belongs to, as one query shared by all its files.
+
+    The words of the first `PACK_DEPTH` folders, without hidden folders (`.trash`),
+    store order ids, or repeated words: "Heart The City Beneath/Heart The City Beneath -
+    Map Set" becomes "Heart The City Beneath Map Set". Empty for a file with no folder.
+    """
+    folders = [
+        folder
+        for folder in PurePosixPath(context.relative_path).parent.parts
+        if not folder.startswith(".")
+    ][:PACK_DEPTH]
+    words: list[str] = []
+    seen: set[str] = set()
+    for folder in folders:
+        for word in _words(_STORE_ORDER_ID.sub("", folder)).split():
+            if word.casefold() not in seen:
+                seen.add(word.casefold())
+                words.append(word)
+    return " ".join(words[:_MAX_PACK_QUERY_WORDS])
 
 
 def comparable_name(name: str) -> str:
