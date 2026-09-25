@@ -22,9 +22,12 @@ def track(description: str, total: int) -> Iterator[ProgressUpdate]:
         BarColumn(),
         TextColumn(
             "{task.fields[filename]}",
-            table_column=Column(no_wrap=True, overflow="ellipsis"),
+            # A ratio column in an expanded table gets only the width left over
+            # by the fixed columns, so just the filename is truncated (at its end).
+            table_column=Column(no_wrap=True, overflow="ellipsis", ratio=1),
         ),
         console=Console(stderr=True),
+        expand=True,
     )
 
     def update(current: int, filename: str, errors: int) -> None:
