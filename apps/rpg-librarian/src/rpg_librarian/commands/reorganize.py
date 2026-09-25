@@ -103,7 +103,9 @@ def _check(placement: Placement, library: Path, pending_sources: set[Path]) -> C
     if dest.exists():
         if dest.resolve() in pending_sources:
             return Check("defer")  # occupied by a file that is itself about to move
-        return Check("blocked", "something already exists at the destination")
+        return Check(
+            "blocked", f"something already exists at the destination: {placement.dest}"
+        )
     return Check("ok")
 
 
@@ -272,6 +274,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
 
         _execute(
             session,
+            placements,
             candidates,
             blocked,
             library,
@@ -293,6 +296,7 @@ def _loggable(stats: Stats) -> dict[str, object]:
 
 def _execute(
     session: Session,
+    placements: list[Placement],
     candidates: list[Placement],
     blocked: dict[int, str],
     library: Path,
@@ -310,6 +314,7 @@ def _execute(
     session.exec(delete(Error).where(col(Error.stage) == ProcessingStage.reorganize))
     for file_id, reason in sorted(blocked.items()):
         _record_blocked(session, file_id, reason, stats)
+    _store_subpaths(session, placements, candidates)
     session.commit()
 
     boundaries = {Path(root.path) for root in roots.values()}
@@ -357,6 +362,28 @@ def _execute(
                 break
             remaining = deferred
     stats.dirs_removed = _prune_empty_dirs(emptied, boundaries)
+
+
+def _store_subpaths(
+    session: Session, placements: list[Placement], candidates: list[Placement]
+) -> None:
+    """Fix the worked-out subpath of every kept file that is in place or about to move.
+
+    A product's files in one root get theirs stored together, before the first of them
+    moves, including any that are blocked: the subpath is worked out from the files
+    still at their source, so the ones left behind would otherwise get a different
+    answer next time. Once stored, a file's place in its product never changes unless
+    the catalog is edited.
+    """
+    moving = {p.group for p in candidates if p.group is not None}
+    for placement in placements:
+        if placement.subpath is None or not placement.subpath_derived:
+            continue
+        if placement.settled or placement.group in moving:
+            file = session.get(File, placement.file_id)
+            assert file is not None
+            file.subpath = placement.subpath
+            session.add(file)
 
 
 def _record_blocked(session: Session, file_id: int, reason: str, stats: Stats) -> None:

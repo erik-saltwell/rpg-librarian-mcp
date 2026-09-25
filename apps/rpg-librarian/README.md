@@ -23,7 +23,8 @@ claude mcp add rpg-librarian-app -- uv run --project /path/to/this/repo \
 Ten tools: `list_unfiled` (the worklist), `list_product_types`, `list_product_lines`,
 `report_file`, `report_product`, `report_line`, `describe_schema`, `query` (read-only
 SQL), `update_product`, and `rename-file` (renames a cataloged file on disk and updates
-its catalog path). The filing operations are also available on the
+its catalog path, or, for a kept file whose product has moved, only in the catalog for
+`reorganize` to apply). The filing operations are also available on the
 command line (`list-unfiled`, `list-types`, `list-lines`, `report-file`, `report-product`,
 `report-line`, `update-product`) and print JSON. Nothing moves on the share until you run
 `reorganize`.
@@ -34,8 +35,13 @@ root) rather than once per file: every file in the pack shares that query and it
 
 `reorganize --dry-run` previews the moves, and `reorganize` performs them: filed products go to
 `library/<type>/<line>/[<product>/]<file>`, and duplicates, superseded, and discarded files
-to `library/.trash/<bucket>/`. It never overwrites, refuses files that changed since the
-last `scan`, and removes only folders it emptied. Try it on a copy first.
+to `library/.trash/<bucket>/`. Below the product folder, a product keeps the subfolders
+under the deepest folder its files share in the source (such as `Day/` and `Night/` map
+variants). Each kept file's path below its product folder is stored in the catalog
+(`file.subpath`) when its product first moves, so later runs never reshuffle it; it
+changes only when the file is re-filed or renamed with `rename-file`. It never
+overwrites, refuses files that changed since the last `scan`, and removes only folders
+it emptied. Try it on a copy first.
 
 ## Logs
 

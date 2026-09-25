@@ -57,6 +57,10 @@ class File(EntityBase, table=True):
         ),
     )
     product_id: int | None = Field(default=None, foreign_key="product.id", index=True)
+    # A kept file's path below its product folder, filename included. Stored by
+    # `reorganize` when the product first moves (NULL until then: worked out from
+    # where the file sits) and cleared when the file is filed differently.
+    subpath: str | None = Field(default=None, nullable=True)
     duplicate_of_id: int | None = Field(
         default=None,
         sa_column=Column(

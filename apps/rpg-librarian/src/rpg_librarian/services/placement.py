@@ -6,13 +6,18 @@ a report and the next `reorganize --dry-run` cannot disagree.
 
 Destinations are relative to the library root:
 
-- `keep` files go to `<type>/<line>/[<product>/]<filename>` (see `paths`).
+- `keep` files go to `<type>/<line>/[<product>/]<subpath>` (see `paths`). A file's
+  subpath is stored in the catalog once its product first moves; until then it is
+  worked out from where the file sits (see `_kept_subpaths`).
 - `duplicate`, `superseded`, and `discard` files go under `.trash/<bucket>/`.
 """
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Literal
 
 from sqlalchemy import func
@@ -21,6 +26,7 @@ from sqlmodel import Session, col, select
 from ..model import Disposition, File, Product, ProductLine, ProductType, Root, RootKind
 from ..paths import (
     TRASH_BUCKETS,
+    clean_subpath,
     desired_trash_path,
     target_relative_path,
     trash_bucket_of,
@@ -41,6 +47,13 @@ class Placement:
     sha256: str | None
     dest: str  # where it belongs, relative to the library root
     settled: bool  # already there
+    # Kept files only: the path below the product folder, and whether it was worked
+    # out this time (True) or read from the catalog (False).
+    subpath: str | None = None
+    subpath_derived: bool = False
+    # Kept files only: (product id, root id). A product's files in one root have their
+    # worked-out subpaths stored together (see `reorganize`).
+    group: tuple[int, int] | None = None
 
     @property
     def dest_key(self) -> str:
@@ -75,20 +88,27 @@ def compute_placements(session: Session) -> list[Placement]:
         .where(col(File.missing_since).is_(None))
         .order_by(col(File.id))
     ).all()
+    subpaths = _kept_subpaths(files, kept_counts)
     for file in files:
         assert file.id is not None
         root = roots[file.root_id]
         in_library = root.kind is RootKind.library
+        subpath: str | None = None
+        derived = False
+        group: tuple[int, int] | None = None
         if file.disposition is Disposition.keep:
             if file.product_id is None or file.product_id not in names:
                 continue  # the CHECK constraint makes this unreachable
             type_name, line_name, product_name = names[file.product_id]
+            kept_subpath, derived = subpaths[file.id]
+            subpath = str(kept_subpath)
+            group = (file.product_id, file.root_id)
             dest = str(
                 target_relative_path(
                     type_name=type_name,
                     line_name=line_name,
                     product_name=product_name,
-                    filename=file.relative_path.rsplit("/", 1)[-1],
+                    subpath=kept_subpath,
                     kept_count=kept_counts.get(file.product_id, 0),
                 )
             )
@@ -121,6 +141,63 @@ def compute_placements(session: Session) -> list[Placement]:
                 sha256=file.sha256,
                 dest=dest,
                 settled=settled,
+                subpath=subpath,
+                subpath_derived=derived,
+                group=group,
             )
         )
     return placements
+
+
+def _kept_subpaths(
+    files: Sequence[File],
+    kept_counts: dict[int | None, int],
+) -> dict[int, tuple[PurePosixPath, bool]]:
+    """Each kept file's path below its product folder, and whether it was worked out.
+
+    A stored subpath is used as it is. The rest are worked out per product and root:
+    a single-file product's file is just its filename. Otherwise the files are placed
+    relative to their *source base*, the deepest folder holding all of them, so a
+    pack's own subfolders (Day/Night, BW/Color) survive the move. If the base also
+    holds other products' files it is a category folder like `Settings and
+    Supplements/`, not the product's, and each file gets just its filename instead.
+    """
+    kept = [f for f in files if f.disposition is Disposition.keep and f.id is not None]
+    # Per root, which products have kept files somewhere below each folder.
+    products_below: dict[int, dict[PurePosixPath, set[int | None]]] = defaultdict(
+        lambda: defaultdict(set)
+    )
+    groups: dict[tuple[int | None, int], list[File]] = defaultdict(list)
+    subpaths: dict[int, tuple[PurePosixPath, bool]] = {}
+    for file in kept:
+        assert file.id is not None
+        for folder in PurePosixPath(file.relative_path).parents:
+            products_below[file.root_id][folder].add(file.product_id)
+        if file.subpath is not None:
+            subpaths[file.id] = (clean_subpath(PurePosixPath(file.subpath)), False)
+        else:
+            groups[(file.product_id, file.root_id)].append(file)
+
+    for (product_id, root_id), group in groups.items():
+        paths = [PurePosixPath(f.relative_path) for f in group]
+        base = _common_folder([p.parent for p in paths])
+        flat = kept_counts.get(product_id, 0) <= 1 or bool(
+            products_below[root_id][base] - {product_id}
+        )
+        for file, path in zip(group, paths, strict=True):
+            assert file.id is not None
+            subpath = PurePosixPath(path.name) if flat else path.relative_to(base)
+            subpaths[file.id] = (clean_subpath(subpath), True)
+    return subpaths
+
+
+def _common_folder(folders: list[PurePosixPath]) -> PurePosixPath:
+    """The deepest folder containing all of `folders` (`.` when only the root does)."""
+    common = folders[0].parts
+    for folder in folders[1:]:
+        parts = folder.parts
+        n = 0
+        while n < min(len(common), len(parts)) and common[n] == parts[n]:
+            n += 1
+        common = common[:n]
+    return PurePosixPath(*common)

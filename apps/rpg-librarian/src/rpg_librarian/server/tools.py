@@ -235,12 +235,16 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
 
     @mcp.tool(name="rename-file")
     def rename_file_tool(file_id: int, new_name: str) -> dict[str, Any]:
-        """Rename one cataloged file and update its catalog path.
+        """Rename one cataloged file; only its filename changes.
 
-        The file stays in its current source and folder; only its filename changes.
         Use the `file_id` returned by list_unfiled or report_file. `new_name` must be
         a filename, not a path. The operation refuses missing files and destination
         collisions, and does not overwrite anything.
+
+        A kept file whose product has already been moved (it has a stored `subpath`)
+        is renamed in the catalog only (`on_disk` is false): the user's next
+        `reorganize` renames it on the share. Any other file is renamed on disk
+        immediately, in its current source and folder.
         """
         try:
             with session_scope(db_path, migrate=False) as session:

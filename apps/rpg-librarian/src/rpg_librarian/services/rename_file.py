@@ -1,4 +1,9 @@
-"""Rename one cataloged file on disk and keep its catalog path in sync."""
+"""Rename one cataloged file: on disk, or in the catalog for a filed file.
+
+A kept file whose place in its product is stored (`File.subpath`) is renamed in the
+catalog only, and `reorganize` moves it; every other file is renamed on disk in its
+current folder, with its catalog path kept in sync.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from ..errors import UsageError
-from ..model import File, Root
+from ..model import Disposition, File, Root
 
 
 def _validated_name(new_name: str) -> str:
@@ -36,6 +41,8 @@ def rename_file(session: Session, file_id: int, new_name: str) -> dict[str, Any]
         raise UsageError(f"File {file_id} is marked missing; scan its root first")
 
     name = _validated_name(new_name)
+    if file.disposition is Disposition.keep and file.subpath is not None:
+        return _rename_subpath(session, file, name)
     old_relative = PurePosixPath(file.relative_path)
     new_relative = old_relative.with_name(name)
     if new_relative == old_relative:
@@ -45,6 +52,7 @@ def rename_file(session: Session, file_id: int, new_name: str) -> dict[str, Any]
             "old_relative_path": str(old_relative),
             "relative_path": str(new_relative),
             "renamed": False,
+            "on_disk": True,
         }
 
     source = Path(root.path) / Path(*old_relative.parts)
@@ -95,4 +103,48 @@ def rename_file(session: Session, file_id: int, new_name: str) -> dict[str, Any]
         "old_relative_path": str(old_relative),
         "relative_path": str(new_relative),
         "renamed": True,
+        "on_disk": True,
+    }
+
+
+def _rename_subpath(session: Session, file: File, name: str) -> dict[str, Any]:
+    """Change the filename in a kept file's stored subpath; `reorganize` moves it."""
+    assert file.subpath is not None
+    old = PurePosixPath(file.subpath)
+    new = old.with_name(name)
+    result = {
+        "file_id": file.id,
+        "root_id": file.root_id,
+        "relative_path": file.relative_path,
+        "old_subpath": str(old),
+        "subpath": str(new),
+    }
+    if new == old:
+        return {**result, "renamed": False, "on_disk": False}
+    clash = next(
+        (
+            other
+            for other in session.exec(
+                select(File)
+                .where(col(File.product_id) == file.product_id)
+                .where(col(File.disposition) == Disposition.keep)
+                .where(col(File.id) != file.id)
+            ).all()
+            if other.subpath is not None
+            and other.subpath.casefold() == str(new).casefold()
+        ),
+        None,
+    )
+    if clash is not None:
+        raise UsageError(
+            f"File {clash.id} of the same product is already at subpath {new}"
+        )
+    file.subpath = str(new)
+    session.add(file)
+    session.commit()
+    return {
+        **result,
+        "renamed": True,
+        "on_disk": False,
+        "note": "Recorded in the catalog; run `reorganize` to rename the file.",
     }

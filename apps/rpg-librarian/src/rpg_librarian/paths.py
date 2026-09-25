@@ -1,7 +1,8 @@
-"""Where a file belongs on the share: one pure function of the catalog's names.
+"""Where a file belongs on the share: pure functions of the catalog's names and paths.
 
 `target_relative_path` is the only place placement rules live. `reorganize` and the
-pending-change count both call it, so nothing derived is ever stored.
+pending-change count both reach it through `services.placement`, so nothing derived is
+ever stored.
 """
 
 from __future__ import annotations
@@ -72,23 +73,40 @@ def kept_file_count(session: Session, product_id: int) -> int:
     return session.exec(statement).one()
 
 
+def clean_subpath(path: PurePosixPath) -> PurePosixPath:
+    """A kept path below a product folder, safe to join under it.
+
+    Empty, `.`, `..`, and root components are dropped so the result can never climb
+    out of the product folder. Folder names are sanitized like every other folder;
+    the filename is kept as it is, as it always has been.
+    """
+    parts = [p for p in path.parts if p not in {"", ".", "..", "/"}]
+    if not parts:
+        raise ValueError(f"no filename in {str(path)!r}")
+    *folders, filename = parts
+    return PurePosixPath(*(sanitize_name(f) for f in folders), filename)
+
+
 def target_relative_path(
     *,
     type_name: str,
     line_name: str,
     product_name: str,
-    filename: str,
+    subpath: PurePosixPath,
     kept_count: int,
 ) -> PurePosixPath:
-    """`<type>/<line>/[<product>/]<filename>`, relative to the library root.
+    """`<type>/<line>/<product>/<subpath>`, or `<type>/<line>/<filename>` for a
+    single-file product, relative to the library root.
 
     A single-file product has no product folder: it sits directly in its line
     folder, and is promoted into a product folder when it gains a second file.
+    `subpath` is the file's path below its product folder (see `services.placement`):
+    usually just the filename, with the source's variant subfolders kept above it.
     """
     parts = [sanitize_name(type_name), sanitize_name(line_name)]
-    if kept_count > 1:
-        parts.append(sanitize_name(product_name))
-    return PurePosixPath(*parts, filename)
+    if kept_count <= 1:
+        return PurePosixPath(*parts, subpath.name)
+    return PurePosixPath(*parts, sanitize_name(product_name)) / clean_subpath(subpath)
 
 
 def trash_bucket_of(root_is_library: bool, relative_path: str) -> str | None:

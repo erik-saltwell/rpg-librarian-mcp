@@ -91,11 +91,14 @@ def update_product(session: Session, request: UpdateProductRequest) -> dict[str,
         if request.review_flag is not None:
             _open_flag(session, file, request.review_flag)
             continue
+        previous = (file.disposition, file.product_id)
         file.disposition = final
         if final is Disposition.unfiled:
             file.product_id = None
         elif product is not None:
             file.product_id = product.id
+        if (file.disposition, file.product_id) != previous:
+            file.subpath = None  # its place in the old product no longer applies
         session.add(file)
         if final is not Disposition.unfiled:
             resolved_flags += _resolve_flags(session, file, request.note, now)
