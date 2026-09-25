@@ -508,6 +508,8 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
             scanner = Scanner(session, pool, force=args.force)
             scanner.library_root_id = library.id
             listings = {root.id: scanner.collect(root) for root in roots}
+            total = sum(len(listing) for listing in listings.values() if listing)
+            print(f"Processing {total} files...", flush=True)
             for root in roots:
                 listing = listings[root.id]
                 if listing is not None:
