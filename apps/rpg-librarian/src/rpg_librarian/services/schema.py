@@ -45,7 +45,8 @@ _TABLE_NOTES = {
     "product": "A set of files that shipped together, unique by name within its line.",
     "file_metadata": "Embedded properties (title, artist, ...) read from the file.",
     "file_text": (
-        "Barcode, ISBN/ISSN, and sample_pages (a bounded page sample). "
+        "Barcode, ISBN/ISSN (PDF only), and sample_pages (physical PDF pages "
+        "or one logical plain-text sample at key '1', capped at 64 KiB of UTF-8). "
         "sample_pages is NOT for querying: a model already read it, and "
         "file_text_analysis holds the hint. Do not select it."
     ),

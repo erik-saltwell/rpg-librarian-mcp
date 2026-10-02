@@ -1,7 +1,7 @@
 """Structured summaries of one file, product, or product line.
 
 Reports carry the text-analysis *hint* (a description and a system guess) but never the
-sampled page text: a model already read the sample, and re-sending it costs context for
+sampled text: a model already read the sample, and re-sending it costs context for
 no new signal. Each report also carries `pending_changes`, so the session can tell the
 user when to run `reorganize`.
 """
@@ -110,6 +110,11 @@ def target_folder(session: Session, product_id: int) -> str | None:
 
 
 def report_file(session: Session, file_id: int) -> dict[str, Any]:
+    """Report one file; `pages_sampled` counts stored sample entries.
+
+    Entries represent physical PDF pages or one logical plain-text sample,
+    including an empty plain-text sample.
+    """
     file = session.get(File, file_id)
     if file is None:
         raise UsageError(f"No file with id {file_id}.")

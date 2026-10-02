@@ -11,13 +11,15 @@ GENERIC_MIME_TYPE: str = "application/octet-stream"
 GENERIC_MEDIA_TYPE: MediaType = MediaType.unknown
 
 # Mime types that carry no useful classification signal on their own (a bare
-# binary blob, or a generic zip container shared by many unrelated formats
+# binary blob, an empty file, or a generic zip container shared by unrelated formats
 # such as .3mf, .docx, .epub, .jar, ...). When magic reports one of these we
 # fall back to the file extension instead.
 GENERIC_MIME_TYPES: frozenset[str] = frozenset(
     {
         GENERIC_MIME_TYPE,
         "application/zip",
+        "inode/x-empty",
+        "application/x-empty",
     }
 )
 

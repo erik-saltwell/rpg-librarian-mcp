@@ -33,7 +33,8 @@ class FileContext:
     title: str | None = None
     isbn: str | None = None
     media_type: str | None = None  # the `MediaType` value, e.g. "pdf"
-    # None: the file has no `file_text` row (not a PDF, or unreadable).
+    # Physical PDF page samples or one logical plain-text sample at "1".
+    # None: the file has no `file_text` row (unsupported media, or unreadable).
     sample_pages: dict[str, str] | None = None
 
 

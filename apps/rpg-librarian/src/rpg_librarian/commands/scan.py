@@ -3,7 +3,8 @@
 Per root: walk every catalogable file, skip the unchanged ones (same size and
 whole-second mtime as recorded), and for the rest copy the file local, hash it,
 detect its media type, extract embedded and per-media metadata, sample PDF text and
-barcodes, then delete the local copy. One share read serves every extraction.
+barcodes or plain text, then delete the local copy. One share read serves every
+extraction.
 
 The hash join runs after each file: a match against a row whose path has gone
 missing is a *move* (the row keeps its product and disposition and just changes
@@ -84,6 +85,9 @@ _TEXT_SAMPLE_HEAD = 5
 _TEXT_SAMPLE_TAIL = 2
 _BARCODE_SAMPLE_HEAD = 2
 _BARCODE_SAMPLE_TAIL = 1
+# Plain text: cap both the local read and the stored UTF-8 text at 64 KiB.
+# Replacement characters for invalid bytes can expand the decoded sample.
+_PLAIN_TEXT_SAMPLE_BYTES = 64 * 1024
 
 
 def _text_pages(page_count: int) -> tuple[int, ...]:
@@ -326,12 +330,32 @@ class Scanner:
             self.stats.errored += 1
             return
 
-        if media_type is MediaType.pdf:
-            try:
+        try:
+            if media_type is MediaType.pdf:
                 self._extract_pdf_text(file, local)
-            except Exception as error:
-                self._record_error(file, ProcessingStage.text, error)
-                self.stats.errored += 1
+            elif media_type is MediaType.text:
+                self._extract_plain_text(file, local)
+        except Exception as error:
+            self._record_error(file, ProcessingStage.text, error)
+            self.stats.errored += 1
+
+    def _extract_plain_text(self, file: File, local: Path) -> None:
+        """Store a bounded prefix of the local copy as one logical page.
+
+        Read at most 64 KiB, decode UTF-8 with an optional BOM removed, and
+        replace undecodable bytes (including a partial character at the read
+        boundary) with U+FFFD. Cap the resulting UTF-8 text at the same byte
+        limit, dropping any final character split by that storage cap.
+        """
+        assert file.id is not None
+        with local.open("rb") as stream:
+            raw = stream.read(_PLAIN_TEXT_SAMPLE_BYTES)
+        text = raw.decode("utf-8-sig", errors="replace")
+        sample = text.encode("utf-8")[:_PLAIN_TEXT_SAMPLE_BYTES].decode(
+            "utf-8", errors="ignore"
+        )
+        self.session.merge(FileText(file_id=file.id, sample_pages={"1": sample}))
+        log_file_fields(pages_sampled=1)
 
     def _extract_pdf_text(self, file: File, local: Path) -> None:
         assert file.id is not None

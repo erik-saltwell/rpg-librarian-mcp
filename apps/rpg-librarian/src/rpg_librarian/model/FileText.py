@@ -7,10 +7,14 @@ from .core import FileMetadataBase
 
 
 class FileText(FileMetadataBase, table=True):
-    """Barcode, identifiers, and a bounded page sample read from a PDF by `scan`.
+    """Identifiers and bounded PDF or plain-text samples read by `scan`.
 
-    `sample_pages` is a JSON object keyed by page number. The sample is bounded
-    (text: first 5 pages plus last 2; barcode: first 2 plus last 1), never full text.
+    `sample_pages` uses string page numbers: physical PDF pages (extracted text
+    or OCR from the first 5 plus last 2), or one logical plain-text sample at "1"
+    (at most 64 KiB of UTF-8 text). Plain-text reads are also capped at 64 KiB;
+    a UTF-8 BOM is removed and undecodable bytes replaced with U+FFFD.
+    Barcode sampling covers the first 2 PDF pages plus last 1. Identifiers are
+    extracted only for PDFs, and remain unset for plain text.
     """
 
     __tablename__ = "file_text"

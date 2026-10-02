@@ -33,6 +33,18 @@ command line (`list-unfiled`, `list-types`, `list-lines`, `report-file`, `report
 tokens, art, audio), and it searches once per pack (the first three folders below the
 root) rather than once per file: every file in the pack shares that query and its hits.
 
+`scan` samples files classified as text from its temporary local copy, reading at
+most 64 KiB. It decodes UTF-8, removes an optional BOM, and replaces undecodable bytes
+with U+FFFD (`�`), including partial characters at the read boundary. The sample is
+also capped at 64 KiB of UTF-8 text, dropping any final character split by that cap.
+It is stored against the source file in `file_text.sample_pages` as `{"1": "..."}`:
+one logical page, alongside the existing physical-page samples for PDFs. Text files
+have no extracted barcode, ISBN, or ISSN. `enrich --source text_analysis` consumes
+these samples; empty samples are recorded as considered without calling the model.
+Empty-file MIME types use the existing extension fallback, so zero-byte `.txt`
+files also receive an empty sample.
+Already cataloged, unchanged text files need `scan --force` to populate their samples.
+
 `reorganize --dry-run` previews the moves, and `reorganize` performs them: filed products go to
 `library/<type>/<line>/[<product>/]<file>`, and duplicates, superseded, and discarded files
 to `library/.trash/<bucket>/`. Below the product folder, a product keeps the subfolders

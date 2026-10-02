@@ -66,6 +66,7 @@ def judge(sample_pages: dict[str, str]) -> Judgment:
 class TextAnalysisSource:
     """Read the stored text sample and record a description and a system guess.
 
+    Samples are physical PDF pages or one logical page for a plain-text file.
     A file whose sample has no real text gets an empty row without calling the
     model: nothing to reason about, and the row records that it was considered.
     """
