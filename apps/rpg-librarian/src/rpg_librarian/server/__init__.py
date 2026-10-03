@@ -25,8 +25,11 @@ current folder and updates the catalog to match.
 
 Workflow: (1) list_product_types and list_product_lines to learn the vocabulary;
 (2) list_unfiled to see the worklist, and pick a folder; (3) list_unfiled with that
-folder to see its files and their hints, and report_file for anything unclear;
-(4) update_product to file the folder's files, many at once per product.
+folder to see its entries and their hints, and report_entry for anything unclear;
+(4) update_product to file the folder's entries, many at once per product.
+
+Every id the tools take or return for an item is an entry id (`entry_id`); today each
+entry is one file.
 
 Rules: search list_product_lines before creating a line, and prefer existing types.
 A product is a set of files that shipped together; standalone content (generic map

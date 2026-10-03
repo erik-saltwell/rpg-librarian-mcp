@@ -13,7 +13,7 @@ from pathlib import PurePosixPath
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from .model import Disposition, File
+from .model import Disposition, Entry, File
 
 # Characters SMB/Windows reject in a path component, plus control characters.
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -67,7 +67,8 @@ def kept_file_count(session: Session, product_id: int) -> int:
     statement = (
         select(func.count())
         .select_from(File)
-        .where(col(File.product_id) == product_id)
+        .join(Entry, col(Entry.file_id) == col(File.id))
+        .where(col(Entry.product_id) == product_id)
         .where(col(File.disposition) == Disposition.keep)
     )
     return session.exec(statement).one()

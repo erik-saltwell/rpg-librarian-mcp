@@ -9,7 +9,6 @@ from rpg_librarian_tools.google import search
 from rpg_librarian_tools.request_policy import RequestPolicy
 
 from ..model import GoogleSearchResult, ProcessingStage
-from ..model.core import FileMetadataBase
 from .base import FatalSourceError
 from .queries import FileContext, google_query, is_product_document, pack_query
 
@@ -46,7 +45,7 @@ class GoogleSource:
     def wants(self, context: FileContext) -> bool:
         return is_product_document(context) or bool(pack_query(context))
 
-    def fetch(self, context: FileContext) -> FileMetadataBase | None:
+    def fetch(self, context: FileContext) -> GoogleSearchResult | None:
         if is_product_document(context):
             query = google_query(context)
         else:

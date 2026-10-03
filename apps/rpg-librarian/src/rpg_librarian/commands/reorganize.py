@@ -69,7 +69,7 @@ class Stats:
     unreachable: int = 0  # in a root that is offline
     dirs_removed: int = 0
     dry_run: bool = False
-    blocked_reasons: dict[int, str] = field(default_factory=dict)
+    blocked_reasons: dict[int, str] = field(default_factory=dict)  # by entry id
 
 
 @dataclass(frozen=True)
@@ -110,7 +110,11 @@ def _check(placement: Placement, library: Path, pending_sources: set[Path]) -> C
 
 
 def _collisions(placements: list[Placement]) -> dict[int, str]:
-    """Files whose destination is also wanted by, or already held by, another file."""
+    """Files whose destination is also wanted by, or already held by, another file.
+
+    Keyed by entry id, and the reasons name entry ids: they are stored in `error` rows,
+    which the review session reads and follows up with the report tool.
+    """
     by_dest: dict[str, list[Placement]] = defaultdict(list)
     for placement in placements:
         by_dest[placement.dest_key].append(placement)
@@ -121,9 +125,11 @@ def _collisions(placements: list[Placement]) -> dict[int, str]:
         for placement in group:
             if placement.settled:
                 continue
-            others = sorted(o.file_id for o in group if o.file_id != placement.file_id)
-            blocked[placement.file_id] = (
-                f"same destination as file(s) {others}: {placement.dest}"
+            others = sorted(
+                o.entry_id for o in group if o.entry_id != placement.entry_id
+            )
+            blocked[placement.entry_id] = (
+                f"same destination as entry(ies) {others}: {placement.dest}"
             )
     return blocked
 
@@ -210,8 +216,10 @@ def _print_plan(
             print(f"  {_display(placement, labels)}  ->  {placement.dest}")
     if blocked:
         print(f"\nBLOCKED: {len(blocked)} (nothing will be moved for these)")
-        for file_id, reason in sorted(blocked.items()):
-            print(f"  file {file_id}  {_display(by_id[file_id], labels)}\n    {reason}")
+        for entry_id, reason in sorted(blocked.items()):
+            print(
+                f"  entry {entry_id}  {_display(by_id[entry_id], labels)}\n    {reason}"
+            )
     if unreachable:
         print("\nUNREACHABLE ROOTS (skipped, nothing recorded):")
         for path in sorted({p.root_path for p in unreachable}):
@@ -245,7 +253,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         reachable = {rid for rid, root in roots.items() if Path(root.path).is_dir()}
 
         placements = compute_placements(session)
-        by_id = {p.file_id: p for p in placements}
+        by_id = {p.entry_id: p for p in placements}
         stats.settled = sum(1 for p in placements if p.settled)
         todo = [p for p in placements if not p.settled]
         unreachable = [p for p in todo if p.root_id not in reachable]
@@ -257,12 +265,12 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         candidates: list[Placement] = []
         pending_sources = {_source_of(p).resolve() for p in todo}
         for placement in todo:
-            if placement.file_id in collided:
-                blocked[placement.file_id] = collided[placement.file_id]
+            if placement.entry_id in collided:
+                blocked[placement.entry_id] = collided[placement.entry_id]
                 continue
             check = _check(placement, library, pending_sources)
             if check.verdict == "blocked":
-                blocked[placement.file_id] = check.reason
+                blocked[placement.entry_id] = check.reason
             else:
                 candidates.append(placement)
 
@@ -312,8 +320,9 @@ def _execute(
     # re-derived below. Clearing first means a file that has since been fixed, or moved
     # by hand and rescanned, does not keep an error it will never be visited to lose.
     session.exec(delete(Error).where(col(Error.stage) == ProcessingStage.reorganize))
-    for file_id, reason in sorted(blocked.items()):
-        _record_blocked(session, file_id, reason, stats)
+    by_id = {p.entry_id: p for p in placements}
+    for entry_id, reason in sorted(blocked.items()):
+        _record_blocked(session, by_id[entry_id], reason, stats)
     _store_subpaths(session, placements, candidates)
     session.commit()
 
@@ -340,7 +349,7 @@ def _execute(
                 progressed = True
                 attempts += 1
                 if check.verdict == "blocked":
-                    _record_blocked(session, placement.file_id, check.reason, stats)
+                    _record_blocked(session, placement, check.reason, stats)
                 else:
                     _apply(session, placement, library_root, library, emptied, stats)
                 session.commit()  # one file, one transaction
@@ -354,7 +363,7 @@ def _execute(
                 for placement in deferred:
                     _record_blocked(
                         session,
-                        placement.file_id,
+                        placement,
                         "its destination is held by a file that cannot move",
                         stats,
                     )
@@ -386,15 +395,21 @@ def _store_subpaths(
             session.add(file)
 
 
-def _record_blocked(session: Session, file_id: int, reason: str, stats: Stats) -> None:
-    file = session.get(File, file_id)
-    path = Path(file.relative_path) if file else Path(str(file_id))
-    with FileTracker(file_id, path, action="blocked"):
-        record_error(session, file_id, ProcessingStage.reorganize, RuntimeError(reason))
+def _record_blocked(
+    session: Session, placement: Placement, reason: str, stats: Stats
+) -> None:
+    path = Path(placement.relative_path)
+    with FileTracker(placement.file_id, path, action="blocked"):
+        record_error(
+            session,
+            placement.entry_id,
+            ProcessingStage.reorganize,
+            RuntimeError(reason),
+        )
         log_file_fields(reason=reason)
         mark_file_error(reason)
     stats.blocked += 1
-    stats.blocked_reasons[file_id] = reason
+    stats.blocked_reasons[placement.entry_id] = reason
 
 
 def _apply(
@@ -423,10 +438,10 @@ def _apply(
             file.relative_path = placement.dest
             file.last_seen_at = datetime.now(UTC)
             session.add(file)
-            clear_error(session, placement.file_id, ProcessingStage.reorganize)
+            clear_error(session, placement.entry_id, ProcessingStage.reorganize)
     except Exception as error:
         session.rollback()
-        record_error(session, placement.file_id, ProcessingStage.reorganize, error)
+        record_error(session, placement.entry_id, ProcessingStage.reorganize, error)
         stats.errors += 1
         return
     emptied.add(source.parent)
@@ -453,5 +468,5 @@ def _print_summary(stats: Stats) -> None:
         print(
             f"warning: {stats.unreachable} file(s) are in an unreachable root; skipped"
         )
-    for file_id, reason in sorted(stats.blocked_reasons.items()):
-        print(f"  blocked: file {file_id}: {reason}")
+    for entry_id, reason in sorted(stats.blocked_reasons.items()):
+        print(f"  blocked: entry {entry_id}: {reason}")

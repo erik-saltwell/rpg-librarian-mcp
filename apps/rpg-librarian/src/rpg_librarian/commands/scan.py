@@ -31,6 +31,7 @@ from rpg_librarian_tools.identifiers import IdentifierKind, find_publication_ide
 from rpg_librarian_tools.pdf import extract_text, scan_identifiers
 
 from ..db import session_scope
+from ..entries import ensure_file_entry, file_entry, file_entry_id, row_key
 from ..error_rows import clear_error, record_error
 from ..errors import UsageError
 from ..infrastructure.isolated_worker import IsolatedWorkerPool, WorkerPool
@@ -41,6 +42,7 @@ from ..model import (
     AudioMetadata,
     Disposition,
     DtrpgResult,
+    Entry,
     Error,
     File,
     FileMetadata,
@@ -226,8 +228,9 @@ class Scanner:
         if existing.sha256 is None:
             return False  # never extracted successfully
         has_error = self.session.exec(
-            select(Error.file_id)
-            .where(col(Error.file_id) == existing.id)
+            select(Error.entry_id)
+            .join(Entry, col(Entry.id) == col(Error.entry_id))
+            .where(col(Entry.file_id) == existing.id)
             .where(col(Error.stage).in_(_SCAN_STAGES))
         ).first()
         return has_error is None
@@ -255,6 +258,7 @@ class Scanner:
                 file.missing_since = None
                 self.session.add(file)
                 self.session.flush()
+                ensure_file_entry(self.session, file)
                 self._record_error(file, ProcessingStage.scan, error)
                 self.stats.errored += 1
                 return file
@@ -277,10 +281,11 @@ class Scanner:
             file.sha256 = inspection.sha256
             file.mime_type = inspection.mime_type
             file.media_type = inspection.media_type
-            if content_changed:
-                self._reset_judgment(file)
             self.session.add(file)
             self.session.flush()
+            ensure_file_entry(self.session, file)
+            if content_changed:
+                self._reset_judgment(file)
 
             self._clear_errors(file)
             self._clear_scan_rows(file)
@@ -298,11 +303,16 @@ class Scanner:
 
     def _reset_judgment(self, file: File) -> None:
         """Different content at the same path invalidates every earlier decision."""
+        assert file.id is not None
+        entry = file_entry(self.session, file.id)
+        assert entry.id is not None
         file.disposition = Disposition.unfiled
-        file.product_id = None
         file.duplicate_of_id = None
+        entry.product_id = None
+        self.session.add(entry)
         for table in _EVIDENCE_TABLES:
-            row = self.session.get(table, file.id)
+            key = row_key(table, file_id=file.id, entry_id=entry.id)
+            row = self.session.get(table, key)
             if row is not None:
                 self.session.delete(row)
         for other in self.session.exec(
@@ -410,29 +420,35 @@ class Scanner:
         self, file: File, stage: ProcessingStage, error: Exception
     ) -> None:
         assert file.id is not None
-        text = record_error(self.session, file.id, stage, error).replace(
+        entry_id = file_entry_id(self.session, file.id)
+        text = record_error(self.session, entry_id, stage, error).replace(
             self._local_copy, self._share_path
         )
-        self._store_error_text(file.id, stage, text)
+        self._store_error_text(entry_id, stage, text)
         log_file_fields(**{f"error_{stage.value}": text[:200]})
         mark_file_error(text)
 
     def _store_error_text(
-        self, file_id: int, stage: ProcessingStage, text: str
+        self, entry_id: int, stage: ProcessingStage, text: str
     ) -> None:
-        row = self.session.get(Error, (file_id, stage))
+        row = self.session.get(Error, (entry_id, stage))
         if row is not None:
             row.error_text = text
             self.session.add(row)
 
     def _clear_errors(self, file: File) -> None:
         assert file.id is not None
+        entry_id = file_entry_id(self.session, file.id)
         for stage in _SCAN_STAGES:
-            clear_error(self.session, file.id, stage)
+            clear_error(self.session, entry_id, stage)
 
     def _clear_scan_rows(self, file: File) -> None:
+        assert file.id is not None
+        entry_id = file_entry_id(self.session, file.id)
         for table in (*_SCAN_TABLES, FileTextAnalysis):
-            row = self.session.get(table, file.id)
+            row = self.session.get(
+                table, row_key(table, file_id=file.id, entry_id=entry_id)
+            )
             if row is not None:
                 self.session.delete(row)
         self.session.flush()

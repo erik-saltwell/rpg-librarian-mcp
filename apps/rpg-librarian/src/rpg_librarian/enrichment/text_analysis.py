@@ -6,7 +6,6 @@ import os
 from pydantic import BaseModel
 
 from ..model import FileTextAnalysis, ProcessingStage
-from ..model.core import FileMetadataBase
 from .base import FatalSourceError
 from .queries import FileContext
 
@@ -84,7 +83,7 @@ class TextAnalysisSource:
     def wants(self, context: FileContext) -> bool:
         return context.sample_pages is not None
 
-    def fetch(self, context: FileContext) -> FileMetadataBase | None:
+    def fetch(self, context: FileContext) -> FileTextAnalysis | None:
         pages = context.sample_pages or {}
         if not any(text.strip() for text in pages.values()):
             return FileTextAnalysis(description=None, possible_system=None)

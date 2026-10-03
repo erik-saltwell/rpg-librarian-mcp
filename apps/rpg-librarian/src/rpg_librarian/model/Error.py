@@ -9,13 +9,17 @@ from .core import ProcessingStage, ProcessingStageType, UTCDateTime, utc_now
 
 
 class Error(SQLModel, table=True):
-    """A transient per-file, per-stage failure: one row, overwritten on retry."""
+    """A transient per-entry, per-stage failure: one row, overwritten on retry.
+
+    Keyed by entry, including failures of file-level stages such as `scan` and
+    `reorganize`: every file has an entry.
+    """
 
     __tablename__ = "error"
 
-    file_id: int = Field(
+    entry_id: int = Field(
         sa_column=Column(
-            ForeignKey("file.id", ondelete="CASCADE"),
+            ForeignKey("entry.id", ondelete="CASCADE"),
             primary_key=True,
         ),
     )

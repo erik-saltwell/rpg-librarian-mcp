@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from .core import EvidenceBase
+from .core import FileEvidenceBase
 
 
-class IsbnResult(EvidenceBase, table=True):
+class IsbnResult(FileEvidenceBase, table=True):
     """The bibliographic record for the file's ISBN.
 
     `results` holds at most one record (title, authors, publisher, year,

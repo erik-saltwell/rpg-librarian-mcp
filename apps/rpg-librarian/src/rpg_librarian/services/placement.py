@@ -23,7 +23,16 @@ from typing import Literal
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from ..model import Disposition, File, Product, ProductLine, ProductType, Root, RootKind
+from ..model import (
+    Disposition,
+    Entry,
+    File,
+    Product,
+    ProductLine,
+    ProductType,
+    Root,
+    RootKind,
+)
 from ..paths import (
     TRASH_BUCKETS,
     clean_subpath,
@@ -35,7 +44,8 @@ from ..paths import (
 
 @dataclass(frozen=True)
 class Placement:
-    file_id: int
+    file_id: int  # internal: which row moves
+    entry_id: int  # what reports and error rows name
     disposition: Disposition
     kind: Literal["keep", "trash"]
     root_id: int
@@ -66,10 +76,12 @@ def compute_placements(session: Session) -> list[Placement]:
     roots = {root.id: root for root in session.exec(select(Root)).all()}
     kept_counts = dict(
         session.exec(
-            select(col(File.product_id), func.count())
+            select(col(Entry.product_id), func.count())
+            .select_from(File)
+            .join(Entry, col(Entry.file_id) == col(File.id))
             .where(col(File.disposition) == Disposition.keep)
             .where(col(File.missing_since).is_(None))
-            .group_by(col(File.product_id))
+            .group_by(col(Entry.product_id))
         ).all()
     )
     names = {
@@ -82,34 +94,41 @@ def compute_placements(session: Session) -> list[Placement]:
     }
 
     placements: list[Placement] = []
-    files = session.exec(
-        select(File)
+    rows = session.exec(
+        select(File, Entry)
+        .join(Entry, col(Entry.file_id) == col(File.id))
         .where(col(File.disposition) != Disposition.unfiled)
         .where(col(File.missing_since).is_(None))
         .order_by(col(File.id))
     ).all()
-    subpaths = _kept_subpaths(files, kept_counts)
+    files = [file for file, _ in rows]
+    entries = {file.id: entry for file, entry in rows}
+    products = {file_id: entry.product_id for file_id, entry in entries.items()}
+    subpaths = _kept_subpaths(files, kept_counts, products)
     for file in files:
         assert file.id is not None
+        entry = entries[file.id]
+        assert entry.id is not None
+        product_id = entry.product_id
         root = roots[file.root_id]
         in_library = root.kind is RootKind.library
         subpath: str | None = None
         derived = False
         group: tuple[int, int] | None = None
         if file.disposition is Disposition.keep:
-            if file.product_id is None or file.product_id not in names:
-                continue  # the CHECK constraint makes this unreachable
-            type_name, line_name, product_name = names[file.product_id]
+            if product_id is None or product_id not in names:
+                continue  # `update_product` never keeps a file without a product
+            type_name, line_name, product_name = names[product_id]
             kept_subpath, derived = subpaths[file.id]
             subpath = str(kept_subpath)
-            group = (file.product_id, file.root_id)
+            group = (product_id, file.root_id)
             dest = str(
                 target_relative_path(
                     type_name=type_name,
                     line_name=line_name,
                     product_name=product_name,
                     subpath=kept_subpath,
-                    kept_count=kept_counts.get(file.product_id, 0),
+                    kept_count=kept_counts.get(product_id, 0),
                 )
             )
             settled = in_library and file.relative_path == dest
@@ -130,6 +149,7 @@ def compute_placements(session: Session) -> list[Placement]:
         placements.append(
             Placement(
                 file_id=file.id,
+                entry_id=entry.id,
                 disposition=file.disposition,
                 kind=kind,
                 root_id=file.root_id,
@@ -152,6 +172,7 @@ def compute_placements(session: Session) -> list[Placement]:
 def _kept_subpaths(
     files: Sequence[File],
     kept_counts: dict[int | None, int],
+    products: dict[int | None, int | None],
 ) -> dict[int, tuple[PurePosixPath, bool]]:
     """Each kept file's path below its product folder, and whether it was worked out.
 
@@ -171,12 +192,13 @@ def _kept_subpaths(
     subpaths: dict[int, tuple[PurePosixPath, bool]] = {}
     for file in kept:
         assert file.id is not None
+        product_id = products[file.id]
         for folder in PurePosixPath(file.relative_path).parents:
-            products_below[file.root_id][folder].add(file.product_id)
+            products_below[file.root_id][folder].add(product_id)
         if file.subpath is not None:
             subpaths[file.id] = (clean_subpath(PurePosixPath(file.subpath)), False)
         else:
-            groups[(file.product_id, file.root_id)].append(file)
+            groups[(product_id, file.root_id)].append(file)
 
     for (product_id, root_id), group in groups.items():
         paths = [PurePosixPath(f.relative_path) for f in group]

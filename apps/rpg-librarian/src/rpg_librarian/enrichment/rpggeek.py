@@ -8,7 +8,6 @@ from rpg_librarian_tools.errors import AuthenticationError, RateLimitError
 from rpg_librarian_tools.rpggeek import Candidate, get_product, search
 
 from ..model import ProcessingStage, RpggeekResult
-from ..model.core import FileMetadataBase
 from ..observability import log_file_fields
 from .base import FatalSourceError
 from .queries import (
@@ -50,7 +49,7 @@ class RpggeekSource:
     def wants(self, context: FileContext) -> bool:
         return is_product_document(context)
 
-    def fetch(self, context: FileContext) -> FileMetadataBase | None:
+    def fetch(self, context: FileContext) -> RpggeekResult | None:
         token = os.environ.get(_ENV)
         queries = [q for q in (context.isbn, *name_ladder(context)) if q]
         if not queries:

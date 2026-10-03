@@ -30,7 +30,7 @@ def update_product(args: argparse.Namespace, catalog_path: Path) -> int:
         if getattr(args, key) is not None
     }
     request = UpdateProductRequest(
-        file_ids=args.file_ids,
+        entry_ids=args.entry_ids,
         disposition=Disposition(args.disposition) if args.disposition else None,
         product_type=args.product_type,
         product_line=args.product_line,
@@ -46,9 +46,9 @@ def update_product(args: argparse.Namespace, catalog_path: Path) -> int:
         return _emit(apply_update_product(session, request))
 
 
-def report_file(args: argparse.Namespace, catalog_path: Path) -> int:
+def report_entry(args: argparse.Namespace, catalog_path: Path) -> int:
     with session_scope(catalog_path) as session:
-        return _emit(reports.report_file(session, args.file_id))
+        return _emit(reports.report_entry(session, args.entry_id))
 
 
 def report_product(args: argparse.Namespace, catalog_path: Path) -> int:

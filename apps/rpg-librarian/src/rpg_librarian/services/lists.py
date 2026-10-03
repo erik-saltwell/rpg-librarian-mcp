@@ -12,6 +12,7 @@ from sqlmodel import Session, col, select
 from ..errors import UsageError
 from ..model import (
     Disposition,
+    Entry,
     File,
     FileTextAnalysis,
     PdfMetadata,
@@ -68,7 +69,8 @@ def list_unfiled(
         raise UsageError(f"No root with id {root_id}.")
 
     statement = (
-        select(File)
+        select(File, Entry)
+        .join(Entry, col(Entry.file_id) == col(File.id))
         .where(col(File.disposition) == Disposition.unfiled)
         .where(col(File.missing_since).is_(None))
         .order_by(col(File.root_id), col(File.relative_path))
@@ -78,11 +80,13 @@ def list_unfiled(
     if not include_flagged:
         statement = statement.where(
             ~exists().where(
-                col(ReviewFlag.file_id) == col(File.id),
+                col(ReviewFlag.entry_id) == col(Entry.id),
                 col(ReviewFlag.resolved_at).is_(None),
             )
         )
-    files = session.exec(statement).all()
+    rows = session.exec(statement).all()
+    files = [file for file, _ in rows]
+    entry_of = {file.id: entry.id for file, entry in rows}
 
     direct: dict[tuple[int, str], int] = defaultdict(int)
     subtree: dict[tuple[int, str], int] = defaultdict(int)
@@ -140,10 +144,13 @@ def list_unfiled(
     ]
     page = in_scope[:limit]
     ids = [f.id for f in page if f.id is not None]
+    entry_ids = [entry_of[i] for i in ids]
     analyses = {
-        a.file_id: a
+        a.entry_id: a
         for a in session.exec(
-            select(FileTextAnalysis).where(col(FileTextAnalysis.file_id).in_(ids))
+            select(FileTextAnalysis).where(
+                col(FileTextAnalysis.entry_id).in_(entry_ids)
+            )
         ).all()
     }
     pdfs = {
@@ -154,8 +161,8 @@ def list_unfiled(
     }
     flagged = set(
         session.exec(
-            select(col(ReviewFlag.file_id))
-            .where(col(ReviewFlag.file_id).in_(ids))
+            select(col(ReviewFlag.entry_id))
+            .where(col(ReviewFlag.entry_id).in_(entry_ids))
             .where(col(ReviewFlag.resolved_at).is_(None))
         ).all()
     )
@@ -173,13 +180,19 @@ def list_unfiled(
         "folder": wanted,
         "files": [
             {
-                "id": f.id,
+                "entry_id": entry_of[f.id],
                 "relative_path": f.relative_path,
                 "media_type": f.media_type.value if f.media_type else None,
                 "size_bytes": f.size_bytes,
                 "pages": pdfs[f.id].page_count if f.id in pdfs else None,
-                "text_analysis": analysis_hint(analyses.get(f.id), truncate=True),
-                **({"open_review_flag": f.id in flagged} if include_flagged else {}),
+                "text_analysis": analysis_hint(
+                    analyses.get(entry_of[f.id]), truncate=True
+                ),
+                **(
+                    {"open_review_flag": entry_of[f.id] in flagged}
+                    if include_flagged
+                    else {}
+                ),
             }
             for f in page
         ],
@@ -214,7 +227,8 @@ def list_product_types(session: Session) -> dict[str, Any]:
         session.exec(
             select(col(ProductLine.product_type_id), func.count())
             .select_from(File)
-            .join(Product, col(Product.id) == col(File.product_id))
+            .join(Entry, col(Entry.file_id) == col(File.id))
+            .join(Product, col(Product.id) == col(Entry.product_id))
             .join(ProductLine, col(ProductLine.id) == col(Product.product_line_id))
             .where(col(File.disposition) == Disposition.keep)
             .group_by(col(ProductLine.product_type_id))

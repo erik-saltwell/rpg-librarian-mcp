@@ -22,18 +22,20 @@ from ..db import session_scope
 from ..enrichment.base import FatalSourceError, Source
 from ..enrichment.queries import FileContext
 from ..enrichment.registry import SOURCES
+from ..entries import row_key
 from ..error_rows import clear_error, record_error
 from ..errors import UsageError
 from ..model import (
     Disposition,
-    EvidenceBase,
+    Entry,
+    EvidenceFields,
     File,
     FileMetadata,
     FileText,
     FileTextAnalysis,
     Root,
 )
-from ..model.core import FileMetadataBase
+from ..model.core import EntryMetadataBase, FileMetadataBase
 from ..observability import FileTracker, log_call_fields
 from ..progress import track
 
@@ -54,7 +56,8 @@ def _eligible(session: Session, source: Source, force: bool) -> list[FileContext
     """Files a source has not yet covered, as contexts, in catalog order."""
     roots = {r.id: r.path for r in session.exec(select(Root)).all()}
     statement = (
-        select(File, FileMetadata, FileText)
+        select(File, Entry, FileMetadata, FileText)
+        .join(Entry, col(Entry.file_id) == col(File.id))
         .join(FileMetadata, col(FileMetadata.file_id) == col(File.id), isouter=True)
         .join(FileText, col(FileText.file_id) == col(File.id), isouter=True)
         .where(col(File.missing_since).is_(None))
@@ -62,16 +65,20 @@ def _eligible(session: Session, source: Source, force: bool) -> list[FileContext
         .order_by(col(File.id))
     )
     if not force:
-        statement = statement.where(
-            ~exists().where(col(source.table.file_id) == col(File.id))
-        )
+        table = source.table
+        if issubclass(table, EntryMetadataBase):
+            covered = col(table.entry_id) == col(Entry.id)
+        else:
+            covered = col(table.file_id) == col(File.id)
+        statement = statement.where(~exists().where(covered))
 
     contexts = []
-    for file, metadata, text in session.exec(statement).all():
-        assert file.id is not None
+    for file, entry, metadata, text in session.exec(statement).all():
+        assert file.id is not None and entry.id is not None
         contexts.append(
             FileContext(
                 file_id=file.id,
+                entry_id=entry.id,
                 path=str(Path(roots[file.root_id]) / file.relative_path),
                 relative_path=file.relative_path,
                 title=metadata.title if metadata else None,
@@ -83,8 +90,8 @@ def _eligible(session: Session, source: Source, force: bool) -> list[FileContext
     return contexts
 
 
-def _has_results(row: FileMetadataBase) -> bool:
-    if isinstance(row, EvidenceBase):
+def _has_results(row: EntryMetadataBase | FileMetadataBase) -> bool:
+    if isinstance(row, EvidenceFields):
         return bool(row.results)
     if isinstance(row, FileTextAnalysis):
         return bool(row.description or row.possible_system)
@@ -107,11 +114,10 @@ def _run_source(
         # A source's rules can change. Rows it holds for files it no longer wants
         # (evidence from an earlier, noisier rule) are stale: drop them.
         for context in everything:
-            stale = (
-                None
-                if source.wants(context)
-                else session.get(source.table, context.file_id)
+            key = row_key(
+                source.table, file_id=context.file_id, entry_id=context.entry_id
             )
+            stale = None if source.wants(context) else session.get(source.table, key)
             if stale is not None:
                 session.delete(stale)
                 stats.removed += 1
@@ -129,18 +135,21 @@ def _run_source(
                 ):
                     row = source.fetch(context)
             except FatalSourceError as error:
-                record_error(session, context.file_id, source.stage, error)
+                record_error(session, context.entry_id, source.stage, error)
                 session.commit()
                 stats.stopped_reason = str(error)
                 break
             except Exception as error:
-                record_error(session, context.file_id, source.stage, error)
+                record_error(session, context.entry_id, source.stage, error)
                 stats.errors += 1
             else:
                 if row is not None:
-                    row.file_id = context.file_id
+                    if isinstance(row, EntryMetadataBase):
+                        row.entry_id = context.entry_id
+                    else:
+                        row.file_id = context.file_id
                     session.merge(row)
-                    clear_error(session, context.file_id, source.stage)
+                    clear_error(session, context.entry_id, source.stage)
                     if _has_results(row):
                         stats.with_results += 1
                     else:

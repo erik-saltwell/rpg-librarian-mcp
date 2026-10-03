@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from ..model import ProcessingStage
-from ..model.core import FileMetadataBase
+from ..model.core import EntryMetadataBase, FileMetadataBase
 from .queries import FileContext
 
 
@@ -31,8 +31,8 @@ class Source(Protocol):
         ...
 
     @property
-    def table(self) -> type[FileMetadataBase]:
-        """The table holding this source's one row per file."""
+    def table(self) -> type[EntryMetadataBase | FileMetadataBase]:
+        """The table holding this source's rows: one per entry, or (ISBN) per file."""
         ...
 
     def unavailable_reason(self) -> str | None:
@@ -47,8 +47,10 @@ class Source(Protocol):
         """Whether this file is worth a request for this source."""
         ...
 
-    def fetch(self, context: FileContext) -> FileMetadataBase | None:
-        """Look the file up. The returned row's `file_id` is set by the caller."""
+    def fetch(
+        self, context: FileContext
+    ) -> EntryMetadataBase | FileMetadataBase | None:
+        """Look the file up. The caller sets the returned row's key."""
         ...
 
 

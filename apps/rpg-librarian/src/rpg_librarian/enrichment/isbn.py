@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from ..model import IsbnResult, ProcessingStage
-from ..model.core import FileMetadataBase
 from . import isbn_lookup
 from .base import FatalSourceError
 from .queries import FileContext
@@ -28,7 +27,7 @@ class IsbnSource:
     def wants(self, context: FileContext) -> bool:
         return context.isbn is not None
 
-    def fetch(self, context: FileContext) -> FileMetadataBase | None:
+    def fetch(self, context: FileContext) -> IsbnResult | None:
         assert context.isbn is not None
         try:
             found = isbn_lookup.lookup(context.isbn)

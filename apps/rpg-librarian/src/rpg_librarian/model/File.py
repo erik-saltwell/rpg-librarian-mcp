@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, Column, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, ForeignKey, UniqueConstraint
 from sqlmodel import Field
 
 from rpg_librarian_tools.files import MediaType
@@ -23,17 +23,14 @@ class File(EntityBase, table=True):
     Identified by `(root_id, relative_path)`; `sha256` is indexed but not unique,
     because each copy needs its own disposition and location. `created_at` is when
     the file was first seen. `sha256`, `mime_type`, and `media_type` are nullable so
-    a row can exist (and carry `error` rows) before extraction has succeeded.
+    a row can exist (and carry `error` rows) before extraction has succeeded. Its
+    product link lives on its `Entry`.
     """
 
     __tablename__ = "file"
-    __table_args__ = (
-        UniqueConstraint("root_id", "relative_path"),
-        CheckConstraint(
-            "disposition != 'keep' OR product_id IS NOT NULL",
-            name="ck_file_keep_requires_product",
-        ),
-    )
+    # `keep` requires a product, but the product is on `entry`, so that rule is
+    # enforced by `update_product` rather than a CHECK constraint.
+    __table_args__ = (UniqueConstraint("root_id", "relative_path"),)
 
     root_id: int = Field(foreign_key="root.id", index=True)
     relative_path: str = Field(nullable=False)
@@ -56,7 +53,6 @@ class File(EntityBase, table=True):
             server_default=Disposition.unfiled.value,
         ),
     )
-    product_id: int | None = Field(default=None, foreign_key="product.id", index=True)
     # A kept file's path below its product folder, filename included. Stored by
     # `reorganize` when the product first moves (NULL until then: worked out from
     # where the file sits) and cleared when the file is filed differently.

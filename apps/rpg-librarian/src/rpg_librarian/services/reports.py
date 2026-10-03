@@ -1,4 +1,7 @@
-"""Structured summaries of one file, product, or product line.
+"""Structured summaries of one entry, product, or product line.
+
+Every id a report shows for a catalog item is an entry id (`entry_id`): the tools take
+entry ids, and file ids never leave the catalog.
 
 Reports carry the text-analysis *hint* (a description and a system guess) but never the
 sampled text: a model already read the sample, and re-sending it costs context for
@@ -12,11 +15,14 @@ from typing import Any
 
 from sqlmodel import Session, SQLModel, col, select
 
+from ..entries import entries_with_files, file_entry_ids, row_key
 from ..errors import UsageError
 from ..model import (
     AudioMetadata,
     Disposition,
     DtrpgResult,
+    Entry,
+    EntryType,
     Error,
     File,
     FileMetadata,
@@ -40,7 +46,7 @@ from ..paths import kept_file_count, sanitize_name
 from .names import normalize_name
 from .pending import pending_changes
 
-_BOOKKEEPING = {"file_id", "created_at", "updated_at"}
+_BOOKKEEPING = {"file_id", "entry_id", "created_at", "updated_at"}
 _MEDIA_TABLES: dict[str, type[SQLModel]] = {
     "pdf": PdfMetadata,
     "image": ImageMetadata,
@@ -109,15 +115,21 @@ def target_folder(session: Session, product_id: int) -> str | None:
     return "/".join(parts)
 
 
-def report_file(session: Session, file_id: int) -> dict[str, Any]:
-    """Report one file; `pages_sampled` counts stored sample entries.
+def report_entry(session: Session, entry_id: int) -> dict[str, Any]:
+    """Report one entry; `pages_sampled` counts stored sample entries.
 
-    Entries represent physical PDF pages or one logical plain-text sample,
-    including an empty plain-text sample.
+    Today every entry is a file entry, reported with its file's details. Sample entries
+    represent physical PDF pages or one logical plain-text sample, including an empty
+    plain-text sample.
     """
-    file = session.get(File, file_id)
-    if file is None:
-        raise UsageError(f"No file with id {file_id}.")
+    found = entries_with_files(session, [entry_id]).get(entry_id)
+    if found is None:
+        raise UsageError(f"No entry with id {entry_id}.")
+    entry, file = found
+    if entry.type is not EntryType.file or file is None:
+        raise UsageError(f"Entry {entry_id} is a {entry.type.value} entry.")
+    assert file.id is not None
+    file_id = file.id
     root = session.get(Root, file.root_id)
     assert root is not None
     folder, _, filename = file.relative_path.rpartition("/")
@@ -131,17 +143,24 @@ def report_file(session: Session, file_id: int) -> dict[str, Any]:
     text = session.get(FileText, file_id)
     open_flag = session.exec(
         select(ReviewFlag)
-        .where(col(ReviewFlag.file_id) == file_id)
+        .where(col(ReviewFlag.entry_id) == entry_id)
         .where(col(ReviewFlag.resolved_at).is_(None))
     ).first()
     original = session.get(File, file.duplicate_of_id) if file.duplicate_of_id else None
-    copies = session.exec(
-        select(col(File.id)).where(col(File.duplicate_of_id) == file_id)
-    ).all()
+    copies = [
+        copy
+        for copy in session.exec(
+            select(col(File.id)).where(col(File.duplicate_of_id) == file_id)
+        ).all()
+        if copy is not None
+    ]
+    related = file_entry_ids(
+        session, [*copies, *([original.id] if original and original.id else [])]
+    )
 
     return {
+        "entry": {"id": entry_id, "type": entry.type.value},
         "file": {
-            "id": file.id,
             "root": {"id": root.id, "kind": root.kind.value, "path": root.path},
             "relative_path": file.relative_path,
             "folder": folder,
@@ -154,13 +173,16 @@ def report_file(session: Session, file_id: int) -> dict[str, Any]:
             "missing_since": file.missing_since,
             "last_seen_at": file.last_seen_at,
         },
-        "product": product_ref(session, file.product_id),
+        "product": product_ref(session, entry.product_id),
         "duplicate_of": (
-            {"id": original.id, "relative_path": original.relative_path}
+            {
+                "entry_id": related.get(original.id or -1),
+                "relative_path": original.relative_path,
+            }
             if original
             else None
         ),
-        "duplicate_ids": list(copies),
+        "duplicate_entry_ids": sorted(related[c] for c in copies if c in related),
         "embedded_metadata": _row(session.get(FileMetadata, file_id)),
         "media_metadata": media,
         "identifiers": (
@@ -174,16 +196,18 @@ def report_file(session: Session, file_id: int) -> dict[str, Any]:
             else None
         ),
         "text_analysis": analysis_hint(
-            session.get(FileTextAnalysis, file_id), truncate=False
+            session.get(FileTextAnalysis, entry_id), truncate=False
         ),
         "evidence": {
-            name: _row(session.get(table, file_id))
+            name: _row(
+                session.get(table, row_key(table, file_id=file_id, entry_id=entry_id))
+            )
             for name, table in _EVIDENCE_TABLES.items()
         },
         "errors": [
             {"stage": e.stage.value, "error": e.error_text, "at": e.occurred_at}
             for e in session.exec(
-                select(Error).where(col(Error.file_id) == file_id)
+                select(Error).where(col(Error.entry_id) == entry_id)
             ).all()
         ],
         "review_flag": (
@@ -197,18 +221,19 @@ def report_file(session: Session, file_id: int) -> dict[str, Any]:
 
 def _files_summary(session: Session, product_id: int) -> list[dict[str, Any]]:
     rows = session.exec(
-        select(File, FileTextAnalysis)
+        select(File, Entry, FileTextAnalysis)
+        .join(Entry, col(Entry.file_id) == col(File.id))
         .join(
             FileTextAnalysis,
-            col(FileTextAnalysis.file_id) == col(File.id),
+            col(FileTextAnalysis.entry_id) == col(Entry.id),
             isouter=True,
         )
-        .where(col(File.product_id) == product_id)
+        .where(col(Entry.product_id) == product_id)
         .order_by(col(File.relative_path))
     ).all()
     return [
         {
-            "id": file.id,
+            "entry_id": entry.id,
             "root_id": file.root_id,
             "relative_path": file.relative_path,
             "media_type": file.media_type.value if file.media_type else None,
@@ -216,7 +241,7 @@ def _files_summary(session: Session, product_id: int) -> list[dict[str, Any]]:
             "disposition": file.disposition.value,
             "text_analysis": analysis_hint(analysis, truncate=True),
         }
-        for file, analysis in rows
+        for file, entry, analysis in rows
     ]
 
 
@@ -329,7 +354,9 @@ def report_line(
     ).all():
         assert product.id is not None
         counts = session.exec(
-            select(col(File.disposition)).where(col(File.product_id) == product.id)
+            select(col(File.disposition))
+            .join(Entry, col(Entry.file_id) == col(File.id))
+            .where(col(Entry.product_id) == product.id)
         ).all()
         products.append(
             {

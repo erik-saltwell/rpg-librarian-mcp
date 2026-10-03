@@ -7,7 +7,6 @@ from rpg_librarian_tools.dtrpg import search_products
 from rpg_librarian_tools.errors import AuthenticationError, RateLimitError
 
 from ..model import DtrpgResult, ProcessingStage
-from ..model.core import FileMetadataBase
 from ..observability import log_file_fields
 from .base import FatalSourceError
 from .queries import FileContext, is_product_document, name_ladder, try_queries
@@ -33,7 +32,7 @@ class DtrpgSource:
     def wants(self, context: FileContext) -> bool:
         return is_product_document(context)
 
-    def fetch(self, context: FileContext) -> FileMetadataBase | None:
+    def fetch(self, context: FileContext) -> DtrpgResult | None:
         queries = name_ladder(context)
         if not queries:
             return None

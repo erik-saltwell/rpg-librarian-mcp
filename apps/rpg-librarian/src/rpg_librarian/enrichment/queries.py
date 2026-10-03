@@ -28,6 +28,7 @@ class FileContext:
     """What `enrich` knows about one file, loaded from the catalog."""
 
     file_id: int
+    entry_id: int  # the key of entry-keyed evidence; see `entries.row_key`
     path: str  # absolute, for logging
     relative_path: str
     title: str | None = None

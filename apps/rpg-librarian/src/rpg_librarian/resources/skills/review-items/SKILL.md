@@ -15,7 +15,9 @@ Report two queues from the RPG librarian catalog:
    often because another file already has, or also wants, the same destination. These
    rows are a snapshot of the last run; they are replaced every time `reorganize` runs.
 
-Do not list ordinary unfiled files unless they appear in one of these queues. Report
+Every item ID is an entry ID (`entry.id`), the ID the MCP tools take; join `entry` to
+`file` on `entry.file_id = file.id` for paths. Do not list ordinary unfiled files unless
+they appear in one of these queues. Report
 first, change nothing, and act on a blocked file only after the user picks an option.
 
 ## Workflow
@@ -27,42 +29,44 @@ first, change nothing, and act on a blocked file only after the user picks an op
 
    ```sql
    SELECT
-     f.id AS item_id,
+     en.id AS item_id,
      f.relative_path AS stored_path,
      rf.reason AS review_flag_reason,
      rf.created_at AS deferred_at
    FROM review_flag rf
-   JOIN file f ON f.id = rf.file_id
+   JOIN entry en ON en.id = rf.entry_id
+   JOIN file f ON f.id = en.file_id
    WHERE rf.resolved_at IS NULL
      AND f.missing_since IS NULL
-   ORDER BY f.id
+   ORDER BY en.id
    ```
 
 3. Collect files blocked by the last reorganize with `query`:
 
    ```sql
    SELECT
-     f.id AS item_id,
+     en.id AS item_id,
      f.root_id,
      r.kind AS root_kind,
      f.relative_path AS stored_path,
      f.subpath,
      f.disposition,
-     f.product_id,
+     en.product_id,
      f.size_bytes,
      f.sha256,
      e.error_text,
      e.occurred_at
    FROM error e
-   JOIN file f ON f.id = e.file_id
+   JOIN entry en ON en.id = e.entry_id
+   JOIN file f ON f.id = en.file_id
    JOIN root r ON r.id = f.root_id
    WHERE e.stage = 'reorganize'
      AND f.missing_since IS NULL
-   ORDER BY f.id
+   ORDER BY en.id
    ```
 
 4. For both queries, check `truncated`. The MCP query tool returns at most 500 rows.
-   If more rows remain, repeat the query using `AND f.id > <last item_id>` and the same
+   If more rows remain, repeat the query using `AND en.id > <last item_id>` and the same
    ordering until every row has been collected.
 5. Derive `filename` from the final path component of `stored_path`; preserve
    `stored_path` exactly as returned from the database. Do not infer a filesystem path.
@@ -74,8 +78,10 @@ first, change nothing, and act on a blocked file only after the user picks an op
 `error_text` begins with an exception name (for example `RuntimeError: `). Classify by
 the rest of the text:
 
-- **Shared destination**: `same destination as file(s) [<ids>]: <dest>`. Two or more
-  files the catalog wants at the same place. The listed IDs are the other claimants.
+- **Shared destination**: `same destination as entry(ies) [<ids>]: <dest>`. Two or
+  more files the catalog wants at the same place. The listed entry IDs are the other
+  claimants. Rows from before the entry table say `file(s)`; their IDs are the same
+  entry IDs.
 - **Occupied destination**: `something already exists at the destination: <dest>`.
   Something is already at `<dest>` (relative to the library root). Older runs omit the
   `: <dest>` part; then treat the occupant as unknown and suggest re-running
@@ -93,9 +99,11 @@ For each naming conflict (shared or occupied destination), find the other party:
   case-insensitively (the share usually is):
 
   ```sql
-  SELECT f.id, f.relative_path, f.subpath, f.disposition, f.product_id, f.size_bytes,
-    f.sha256
-  FROM file f JOIN root r ON r.id = f.root_id
+  SELECT en.id AS item_id, f.relative_path, f.subpath, f.disposition, en.product_id,
+    f.size_bytes, f.sha256
+  FROM file f
+  JOIN entry en ON en.file_id = f.id
+  JOIN root r ON r.id = f.root_id
   WHERE r.kind = 'library'
     AND f.missing_since IS NULL
     AND lower(f.relative_path) = lower('<dest>')
@@ -104,7 +112,7 @@ For each naming conflict (shared or occupied destination), find the other party:
   If nothing is found, the occupant is not in the catalog; the user should run `scan`
   so it is cataloged, then run this skill again.
 
-Call `report_file` for the blocked file and each other party. Group each conflict once,
+Call `report_entry` for the blocked file and each other party. Group each conflict once,
 listing all its files, rather than repeating it for every member. Compare:
 
 - **Same content** (equal, non-null `sha256`): the files are identical copies.
@@ -121,7 +129,7 @@ listing all its files, rather than repeating it for every member. Compare:
 Then offer the options that fit, recommending one with a short reason:
 
 - **Discard the copy** (same content only): `update_product` with the redundant file's
-  ID, `disposition="discard"`, and a `note` naming the kept file. Recommend keeping the
+  entry ID, `disposition="discard"`, and a `note` naming the kept file. Recommend keeping the
   file that is already in the library.
 - **Rename one file**: propose a specific new filename for the blocked file (or the
   other party) that tells them apart, based on evidence such as its product, source

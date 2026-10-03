@@ -1,4 +1,8 @@
-"""Per-file, per-stage failure rows: overwritten on retry, cleared on success."""
+"""Per-entry, per-stage failure rows: overwritten on retry, cleared on success.
+
+Keyed by entry, including failures of file-level stages (`scan`, `reorganize`): every
+file has an entry, and `entries.file_entry_id` finds it.
+"""
 
 from __future__ import annotations
 
@@ -10,20 +14,20 @@ _MAX_TEXT = 2000
 
 
 def record_error(
-    session: Session, file_id: int, stage: ProcessingStage, error: Exception
+    session: Session, entry_id: int, stage: ProcessingStage, error: Exception
 ) -> str:
     """Write (or overwrite) the error row and return its text."""
     text = f"{type(error).__name__}: {error}"[:_MAX_TEXT]
-    row = session.get(Error, (file_id, stage))
+    row = session.get(Error, (entry_id, stage))
     if row is None:
-        row = Error(file_id=file_id, stage=stage, error_text=text)
+        row = Error(entry_id=entry_id, stage=stage, error_text=text)
     else:
         row.error_text = text
     session.add(row)
     return text
 
 
-def clear_error(session: Session, file_id: int, stage: ProcessingStage) -> None:
-    row = session.get(Error, (file_id, stage))
+def clear_error(session: Session, entry_id: int, stage: ProcessingStage) -> None:
+    row = session.get(Error, (entry_id, stage))
     if row is not None:
         session.delete(row)

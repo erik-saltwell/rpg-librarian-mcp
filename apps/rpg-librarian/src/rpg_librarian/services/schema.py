@@ -35,9 +35,13 @@ _DISALLOWED_LEADING_WORDS = frozenset(
 
 _TABLE_NOTES = {
     "root": "A registered location: the library, or a staging dump folder.",
+    "entry": (
+        "A catalog item: the id the tools take. Today every entry is a file "
+        "(type 'file', file_id set). Its product lives here (product_id)."
+    ),
     "file": (
-        "One physical file occurrence. "
-        "Filing state lives here (disposition, product_id)."
+        "One physical file occurrence, with its disposition. Join to entry on "
+        "entry.file_id = file.id for its entry id and product."
     ),
     "product_type": "A top-level function folder: games, maps, ...",
     "product_line": "A game, model line, or publisher within one type.",
@@ -51,43 +55,48 @@ _TABLE_NOTES = {
         "file_text_analysis holds the hint. Do not select it."
     ),
     "file_text_analysis": (
-        "A model's description and possible_system guess from the sample."
+        "A model's description and possible_system guess from the sample "
+        "(keyed by entry_id)."
     ),
-    "isbn_result": "Bibliographic record for the file's ISBN (evidence).",
-    "dtrpg_result": "DriveThruRPG search hits (evidence).",
-    "rpggeek_result": "RPGGeek search candidates (evidence).",
-    "google_search_result": "Top Google hits (evidence).",
-    "error": "A failed stage for a file; cleared when it later succeeds.",
+    "isbn_result": (
+        "Bibliographic record for the file's ISBN (evidence; keyed by file_id)."
+    ),
+    "dtrpg_result": "DriveThruRPG search hits (evidence; keyed by entry_id).",
+    "rpggeek_result": "RPGGeek search candidates (evidence; keyed by entry_id).",
+    "google_search_result": "Top Google hits (evidence; keyed by entry_id).",
+    "error": "A failed stage for an entry; cleared when it later succeeds.",
     "review_flag": (
-        "A deferral: the LLM could not place the file. Open while resolved_at is null."
+        "A deferral: the LLM could not place the entry. Open while resolved_at is null."
     ),
 }
 
 _EXAMPLE_QUERIES = [
     {
         "name": "files_needing_text_analysis",
-        "description": "Files with a text sample but no analysis yet.",
+        "description": "Entries with a text sample but no analysis yet.",
         "sql": (
-            "SELECT f.id, f.relative_path FROM file f "
+            "SELECT e.id AS entry_id, f.relative_path FROM entry e "
+            "JOIN file f ON f.id = e.file_id "
             "JOIN file_text t ON t.file_id = f.id "
-            "LEFT JOIN file_text_analysis a ON a.file_id = f.id "
-            "WHERE a.file_id IS NULL AND f.disposition = 'unfiled'"
+            "LEFT JOIN file_text_analysis a ON a.entry_id = e.id "
+            "WHERE a.entry_id IS NULL AND f.disposition = 'unfiled'"
         ),
     },
     {
         "name": "open_review_flags",
-        "description": "Files the LLM deferred and has not yet resolved.",
+        "description": "Entries the LLM deferred and has not yet resolved.",
         "sql": (
-            "SELECT r.file_id, f.relative_path, r.reason FROM review_flag r "
-            "JOIN file f ON f.id = r.file_id WHERE r.resolved_at IS NULL"
+            "SELECT r.entry_id, f.relative_path, r.reason FROM review_flag r "
+            "JOIN entry e ON e.id = r.entry_id JOIN file f ON f.id = e.file_id "
+            "WHERE r.resolved_at IS NULL"
         ),
     },
     {
         "name": "files_with_errors",
-        "description": "Files whose last attempt at some stage failed.",
+        "description": "Entries whose last attempt at some stage failed.",
         "sql": (
-            "SELECT e.file_id, f.relative_path, e.stage, e.error_text FROM error e "
-            "JOIN file f ON f.id = e.file_id"
+            "SELECT x.entry_id, f.relative_path, x.stage, x.error_text FROM error x "
+            "JOIN entry e ON e.id = x.entry_id JOIN file f ON f.id = e.file_id"
         ),
     },
 ]

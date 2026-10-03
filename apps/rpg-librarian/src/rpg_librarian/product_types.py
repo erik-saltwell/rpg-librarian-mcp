@@ -18,4 +18,5 @@ SEED_PRODUCT_TYPES: tuple[str, ...] = (
     "terrain",
     "vtt packs",
     "system-agnostic-text",
+    "design-assets",
 )

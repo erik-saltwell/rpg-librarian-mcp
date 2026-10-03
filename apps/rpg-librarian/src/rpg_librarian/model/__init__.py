@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from .AudioMetadata import AudioMetadata
-from .core import EvidenceBase
+from .core import EntryMetadataBase, EvidenceBase, EvidenceFields, FileEvidenceBase
 from .Disposition import Disposition
 from .DtrpgResult import DtrpgResult
+from .Entry import Entry
+from .EntryType import EntryType
 from .Error import Error
 from .File import File
 from .FileMetadata import FileMetadata
@@ -30,9 +32,14 @@ __all__ = [
     "AudioMetadata",
     "Disposition",
     "DtrpgResult",
+    "Entry",
+    "EntryMetadataBase",
+    "EntryType",
     "Error",
     "EvidenceBase",
+    "EvidenceFields",
     "File",
+    "FileEvidenceBase",
     "FileMetadata",
     "FileText",
     "FileTextAnalysis",

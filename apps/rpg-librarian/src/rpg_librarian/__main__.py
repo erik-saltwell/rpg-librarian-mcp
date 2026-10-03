@@ -18,8 +18,8 @@ _VERBS = {
     "add-source": "Register a staging root (a dump folder).",
     "scan": "Walk roots and record files, hashes, and metadata.",
     "enrich": "Look up external evidence and extract with an LLM.",
-    "update-product": "Record a judgment about files (the MCP writer).",
-    "report-file": "Everything known about one file.",
+    "update-product": "Record a judgment about entries (the MCP writer).",
+    "report-entry": "Everything known about one entry.",
     "report-product": "One product with its files.",
     "report-line": "One product line with its products.",
     "list-unfiled": "The worklist: folders and files not yet filed.",
@@ -44,7 +44,7 @@ _HANDLERS: dict[str, Handler] = {
     "scan": scan.run,
     "enrich": enrich.run,
     "update-product": tools.update_product,
-    "report-file": tools.report_file,
+    "report-entry": tools.report_entry,
     "report-product": tools.report_product,
     "report-line": tools.report_line,
     "list-unfiled": tools.list_unfiled,
@@ -96,7 +96,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Refetch files a source has already covered.",
     )
     up = verbs["update-product"]
-    up.add_argument("file_ids", type=int, nargs="+", help="Ids of the files to update.")
+    up.add_argument(
+        "entry_ids", type=int, nargs="+", help="Ids of the entries to update."
+    )
     up.add_argument(
         "--disposition", choices=["keep", "superseded", "discard", "unfiled"]
     )
@@ -110,7 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--note", help="Why, when this resolves an open review flag.")
     for field in ("publisher", "year", "artists", "description"):
         up.add_argument(f"--{field}")
-    verbs["report-file"].add_argument("file_id", type=int)
+    verbs["report-entry"].add_argument("entry_id", type=int)
     for name in ("report-product", "report-line"):
         verbs[name].add_argument("--id", type=int)
         verbs[name].add_argument("--type", dest="product_type")

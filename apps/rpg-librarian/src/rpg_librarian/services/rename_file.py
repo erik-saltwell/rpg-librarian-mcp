@@ -2,7 +2,8 @@
 
 A kept file whose place in its product is stored (`File.subpath`) is renamed in the
 catalog only, and `reorganize` moves it; every other file is renamed on disk in its
-current folder, with its catalog path kept in sync.
+current folder, with its catalog path kept in sync. The file is named by its entry id,
+and only file entries can be renamed.
 """
 
 from __future__ import annotations
@@ -13,8 +14,9 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
+from ..entries import entries_with_files, file_entry_ids
 from ..errors import UsageError
-from ..model import Disposition, File, Root
+from ..model import Disposition, Entry, EntryType, File, Root
 
 
 def _validated_name(new_name: str) -> str:
@@ -29,25 +31,31 @@ def _validated_name(new_name: str) -> str:
     return name
 
 
-def rename_file(session: Session, file_id: int, new_name: str) -> dict[str, Any]:
+def rename_file(session: Session, entry_id: int, new_name: str) -> dict[str, Any]:
     """Rename a file within its current folder, updating disk and catalog together."""
-    file = session.get(File, file_id)
-    if file is None:
-        raise UsageError(f"No file with id {file_id}")
+    found = entries_with_files(session, [entry_id]).get(entry_id)
+    if found is None:
+        raise UsageError(f"No entry with id {entry_id}")
+    entry, file = found
+    if entry.type is not EntryType.file or file is None:
+        raise UsageError(
+            f"Entry {entry_id} is a {entry.type.value} entry; only files can be renamed"
+        )
+    file_id = file.id
     root = session.get(Root, file.root_id)
     if root is None:  # Defensive: the foreign key should make this impossible.
-        raise UsageError(f"File {file_id} refers to missing root {file.root_id}")
+        raise UsageError(f"Entry {entry_id} refers to missing root {file.root_id}")
     if file.missing_since is not None:
-        raise UsageError(f"File {file_id} is marked missing; scan its root first")
+        raise UsageError(f"Entry {entry_id} is marked missing; scan its root first")
 
     name = _validated_name(new_name)
     if file.disposition is Disposition.keep and file.subpath is not None:
-        return _rename_subpath(session, file, name)
+        return _rename_subpath(session, entry, file, name)
     old_relative = PurePosixPath(file.relative_path)
     new_relative = old_relative.with_name(name)
     if new_relative == old_relative:
         return {
-            "file_id": file_id,
+            "entry_id": entry_id,
             "root_id": root.id,
             "old_relative_path": str(old_relative),
             "relative_path": str(new_relative),
@@ -69,8 +77,10 @@ def rename_file(session: Session, file_id: int, new_name: str) -> dict[str, Any]
         .where(col(File.id) != file_id)
     ).first()
     if collision is not None:
+        assert collision.id is not None
+        other = file_entry_ids(session, [collision.id]).get(collision.id)
         raise UsageError(
-            f"Destination is already cataloged as file {collision.id}: {new_relative}"
+            f"Destination is already cataloged as entry {other}: {new_relative}"
         )
 
     # Flush first so ordinary catalog constraint failures happen before the disk move.
@@ -98,7 +108,7 @@ def rename_file(session: Session, file_id: int, new_name: str) -> dict[str, Any]
         raise
 
     return {
-        "file_id": file_id,
+        "entry_id": entry_id,
         "root_id": root.id,
         "old_relative_path": str(old_relative),
         "relative_path": str(new_relative),
@@ -107,13 +117,15 @@ def rename_file(session: Session, file_id: int, new_name: str) -> dict[str, Any]
     }
 
 
-def _rename_subpath(session: Session, file: File, name: str) -> dict[str, Any]:
+def _rename_subpath(
+    session: Session, entry: Entry, file: File, name: str
+) -> dict[str, Any]:
     """Change the filename in a kept file's stored subpath; `reorganize` moves it."""
     assert file.subpath is not None
     old = PurePosixPath(file.subpath)
     new = old.with_name(name)
     result = {
-        "file_id": file.id,
+        "entry_id": entry.id,
         "root_id": file.root_id,
         "relative_path": file.relative_path,
         "old_subpath": str(old),
@@ -123,10 +135,11 @@ def _rename_subpath(session: Session, file: File, name: str) -> dict[str, Any]:
         return {**result, "renamed": False, "on_disk": False}
     clash = next(
         (
-            other
-            for other in session.exec(
-                select(File)
-                .where(col(File.product_id) == file.product_id)
+            other_entry
+            for other, other_entry in session.exec(
+                select(File, Entry)
+                .join(Entry, col(Entry.file_id) == col(File.id))
+                .where(col(Entry.product_id) == entry.product_id)
                 .where(col(File.disposition) == Disposition.keep)
                 .where(col(File.id) != file.id)
             ).all()
@@ -137,7 +150,7 @@ def _rename_subpath(session: Session, file: File, name: str) -> dict[str, Any]:
     )
     if clash is not None:
         raise UsageError(
-            f"File {clash.id} of the same product is already at subpath {new}"
+            f"Entry {clash.id} of the same product is already at subpath {new}"
         )
     file.subpath = str(new)
     session.add(file)

@@ -6,7 +6,8 @@ description: File or review unfiled files in the rpg-librarian catalog, one fold
 # Process a batch
 
 File the catalog's unfiled files into products by recording product type, product line,
-and product with the `rpg-librarian` tools. Make the judgment calls; deterministic work
+and product with the `rpg-librarian` tools. Every tool takes and returns entry IDs (`entry_id`); today each entry is one file.
+Make the judgment calls; deterministic work
 (scanning, looking things up, moving files) has already been done, or is done afterwards
 by the user.
 
@@ -36,7 +37,7 @@ cannot be identified, defer it with a review flag rather than guessing.
    `recursive=true` to check its whole subtree. If there are no unflagged files,
    perform the final backlog check below before stopping. Suggest `scan` and `enrich`
    only if the scope has no unfiled files at all.
-3. Open `report_file` on one or two files. If they have no text-analysis hint and every
+3. Open `report_entry` on one or two entries. If they have no text-analysis hint and every
    evidence block is empty, `enrich` probably has not run: say so, and continue only
    with the user's approval.
 
@@ -45,13 +46,13 @@ cannot be identified, defer it with a review flag rather than guessing.
 1. Learn the vocabulary: `list_product_types`, then `list_product_lines`.
 2. Read the scoped worklist with `list_unfiled` and pick a folder.
 3. Call `list_unfiled` with that folder (use `recursive` when one product spans
-   subfolders) to see its files with their hints. Use `report_file` for anything unclear.
+   subfolders) to see its files with their hints. Use `report_entry` for anything unclear.
    Check `truncated` and returned counts on every listing. The default limit is 100;
    increase it or inspect subfolders separately before deciding product boundaries.
 4. Search `list_product_lines` for the intended line. For an existing line, call
    `report_line` to inspect its products and reuse the exact matching product name.
    Use `report_product` to resolve ambiguous matches before writing.
-5. File with `update_product`, one product per call, with at most 500 file IDs. Split
+5. File with `update_product`, one product per call, with at most 500 entry IDs. Split
    larger products across calls using the same product coordinates. Inspect warnings,
    especially similar-name warnings. Correct accidental duplicate assignments by
    re-filing with the existing product name before continuing.
@@ -60,15 +61,16 @@ cannot be identified, defer it with a review flag rather than guessing.
 
 ## Review mode
 
-1. Find open review flags with `query`, joining `review_flag` to `file`, and selecting
-   the file ID, root ID, relative path, flag reason, and creation time where
+1. Find open review flags with `query`, joining `review_flag` to `entry` (on
+   `entry_id`) and `entry` to `file` (on `entry.file_id`), and selecting the entry ID,
+   root ID, relative path, flag reason, and creation time where
    `resolved_at IS NULL` and `missing_since IS NULL`. Apply any folder or root scope
    the user supplied. Do not mix unflagged files into a review-only request.
-2. Call `report_file` for each item being reviewed so the original reason and current
+2. Call `report_entry` for each item being reviewed so the original reason and current
    evidence are visible before changing it.
 3. Follow the user's judgment:
    - For “remove,” “junk,” “trash,” or equivalent, call `update_product` with that
-     file ID, `disposition="discard"`, and a concise `note` recording the reason.
+     entry ID, `disposition="discard"`, and a concise `note` recording the reason.
    - For an identified product, call `update_product` with `disposition="keep"` and
      the resolved product coordinates, following the normal vocabulary checks.
    - Use `superseded` only when a retained replacement is known.
@@ -111,7 +113,7 @@ cannot be identified, defer it with a review flag rather than guessing.
 
 Recheck the requested scope with `list_unfiled(include_flagged=true)`; for a folder
 scope, include its subtree with `recursive=true`. Handle truncation and use
-`report_file` for flag reasons. Distinguish newly deferred files from the previous
+`report_entry` for flag reasons. Distinguish newly deferred files from the previous
 backlog and report remaining unflagged files separately.
 
 Print a concise summary of filed products, created lines/types/aliases, files marked

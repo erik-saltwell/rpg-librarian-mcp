@@ -37,20 +37,21 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
         include_flagged: bool = False,
         limit: int = 100,
     ) -> dict[str, Any]:
-        """The worklist: files nobody has filed yet, so you can work a folder at a time.
+        """The worklist: entries nobody has filed yet, worked a folder at a time.
 
         With no `folder`, returns every folder that holds unfiled files, with
         `direct_files` (in that folder) and `subtree_files` (including subfolders)
         counts, per root. With a `folder` (relative to its root, e.g. "Blood and
         Bone/Core Rules"), returns that folder's own unfiled files, each with its
-        text-analysis hint (a short description and a guess at its game system), plus
-        its subfolders. Set `recursive` to get every file under the folder, which is
-        how you file a product that spans subfolders. `root_id` is needed only when
+        `entry_id` (the id every other tool takes) and its text-analysis hint (a
+        short description and a guess at its game system), plus its subfolders. Set
+        `recursive` to get every file under the folder, which is how you file a
+        product that spans subfolders. `root_id` is needed only when
         the same folder path exists under several roots.
 
         Files already resolved never appear: automatic duplicates, files missing from
         the share, and (unless `include_flagged`) files you deferred with a review
-        flag. Use report_file for a file's full evidence.
+        flag. Use report_entry for an entry's full evidence.
         """
         return _read(
             db_path,
@@ -92,17 +93,18 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
         )
 
     @mcp.tool
-    def report_file(file_id: int) -> dict[str, Any]:
-        """Everything known about one file.
+    def report_entry(entry_id: int) -> dict[str, Any]:
+        """Everything known about one entry (today, always a file).
 
-        Location and folder, disposition and product, embedded and per-media metadata,
-        ISBN/ISSN/barcode, the text-analysis hint, all external evidence (ISBN record,
-        DriveThruRPG, RPGGeek, Google search; each may be null), any errors, any open
-        review flag, and `pending_changes`. The sampled page text is not returned: a
-        model already read it and the hint is what it produced. Evidence is candidate
-        signal, not a verdict; the folder path is often the strongest clue.
+        The entry's id and type; the file's location and folder, disposition and
+        product, embedded and per-media metadata, ISBN/ISSN/barcode, the
+        text-analysis hint, all external evidence (ISBN record, DriveThruRPG, RPGGeek,
+        Google search; each may be null), any errors, any open review flag, and
+        `pending_changes`. The sampled page text is not returned: a model already
+        read it and the hint is what it produced. Evidence is candidate signal, not a
+        verdict; the folder path is often the strongest clue.
         """
-        return _read(db_path, reports.report_file, file_id=file_id)
+        return _read(db_path, reports.report_entry, entry_id=entry_id)
 
     @mcp.tool
     def report_product(
@@ -111,7 +113,8 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
         product_line: str | None = None,
         product: str | None = None,
     ) -> dict[str, Any]:
-        """One product: its details, line, type, files (with dispositions and hints),
+        """One product: its details, line, type, files (with entry ids, dispositions,
+        and hints),
         the folder its kept files go in, and `pending_changes`.
 
         Identify it by `product_id`, or by `product_type`, `product_line`, and
@@ -172,7 +175,7 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
 
     @mcp.tool(name="update_product")
     def update_product_tool(
-        file_ids: list[int],
+        entry_ids: list[int],
         disposition: Literal["keep", "superseded", "discard", "unfiled"] | None = None,
         product_type: str | None = None,
         product_line: str | None = None,
@@ -184,10 +187,11 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
         review_flag: str | None = None,
         note: str | None = None,
     ) -> dict[str, Any]:
-        """Record your judgment about a set of files.
+        """Record your judgment about a set of entries (files).
 
-        Pass many `file_ids` for one product in one call. It is a single transaction:
-        if anything is invalid nothing changes and the error names what failed.
+        Pass many `entry_ids` for one product in one call, at most 500. It is a
+        single transaction: if anything is invalid nothing changes and the error
+        names what failed.
 
         `disposition`:
         - "keep": the files belong to a product. Requires `product_type`,
@@ -215,7 +219,7 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
         `target_folder` shows where the product's kept files will go.
         """
         request = UpdateProductRequest(
-            file_ids=file_ids,
+            entry_ids=entry_ids,
             disposition=Disposition(disposition) if disposition else None,
             product_type=product_type,
             product_line=product_line,
@@ -234,10 +238,10 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
             raise ToolError(str(error)) from error
 
     @mcp.tool(name="rename-file")
-    def rename_file_tool(file_id: int, new_name: str) -> dict[str, Any]:
+    def rename_file_tool(entry_id: int, new_name: str) -> dict[str, Any]:
         """Rename one cataloged file; only its filename changes.
 
-        Use the `file_id` returned by list_unfiled or report_file. `new_name` must be
+        Use the `entry_id` returned by list_unfiled or report_entry. `new_name` must be
         a filename, not a path. The operation refuses missing files and destination
         collisions, and does not overwrite anything.
 
@@ -248,7 +252,7 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
         """
         try:
             with session_scope(db_path, migrate=False) as session:
-                return to_jsonable(rename_file(session, file_id, new_name))
+                return to_jsonable(rename_file(session, entry_id, new_name))
         except UsageError as error:
             raise ToolError(str(error)) from error
 

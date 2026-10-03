@@ -1,5 +1,9 @@
 """`update_product`: the one writer. Records the LLM's judgment in the catalog.
 
+It takes entry ids. A file entry's disposition is on its `file`; its product link is
+on the `entry`. `keep` requires a product: that rule is enforced here, because the two
+values live in different tables and no CHECK constraint can span them.
+
 One call is one transaction: every check runs before anything is kept, and any
 failure raises `UsageError` so the caller rolls the whole call back, naming what
 failed. Partial success would leave the LLM guessing what landed.
@@ -14,9 +18,12 @@ from typing import Any
 
 from sqlmodel import Session, col, select
 
+from ..entries import entries_with_files, file_entry_ids
 from ..errors import UsageError
 from ..model import (
     Disposition,
+    Entry,
+    EntryType,
     File,
     Product,
     ProductLine,
@@ -27,7 +34,7 @@ from ..model import (
 from ..paths import folder_key, kept_file_count, sanitize_name
 from .names import clean_name, closest_names, near_matches, normalize_name
 
-MAX_FILES_PER_CALL = 500
+MAX_ENTRIES_PER_CALL = 500
 # What the LLM may write. `duplicate` is written only by `scan`.
 WRITABLE_DISPOSITIONS = (
     Disposition.keep,
@@ -40,7 +47,7 @@ PRODUCT_METADATA_FIELDS = ("publisher", "year", "artists", "description")
 
 @dataclass
 class UpdateProductRequest:
-    file_ids: list[int]
+    entry_ids: list[int]
     disposition: Disposition | None = None
     product_type: str | None = None
     product_line: str | None = None
@@ -63,10 +70,10 @@ class _Outcome:
 
 
 def update_product(session: Session, request: UpdateProductRequest) -> dict[str, Any]:
-    """Apply one judgment to some files, or raise `UsageError` and change nothing."""
-    ids = list(dict.fromkeys(request.file_ids))
+    """Apply one judgment to some entries, or raise `UsageError` and change nothing."""
+    ids = list(dict.fromkeys(request.entry_ids))
     coordinates = _validate_request(request, ids)
-    files = _load_files(session, ids)
+    items = _load_entries(session, ids)
 
     outcome = _Outcome()
     product: Product | None = None
@@ -87,25 +94,26 @@ def update_product(session: Session, request: UpdateProductRequest) -> dict[str,
     assert final is not None
     resolved_flags = 0
     now = datetime.now(UTC)
-    for file in files:
+    for entry, file in items:
         if request.review_flag is not None:
-            _open_flag(session, file, request.review_flag)
+            _open_flag(session, entry, request.review_flag)
             continue
-        previous = (file.disposition, file.product_id)
+        previous = (file.disposition, entry.product_id)
         file.disposition = final
         if final is Disposition.unfiled:
-            file.product_id = None
+            entry.product_id = None
         elif product is not None:
-            file.product_id = product.id
-        if (file.disposition, file.product_id) != previous:
+            entry.product_id = product.id
+        if (file.disposition, entry.product_id) != previous:
             file.subpath = None  # its place in the old product no longer applies
         session.add(file)
+        session.add(entry)
         if final is not Disposition.unfiled:
-            resolved_flags += _resolve_flags(session, file, request.note, now)
+            resolved_flags += _resolve_flags(session, entry, request.note, now)
     session.flush()
 
     result: dict[str, Any] = {
-        "updated_file_ids": ids,
+        "updated_entry_ids": ids,
         "disposition": None if request.review_flag is not None else final.value,
         "review_flag_opened": request.review_flag is not None,
         "review_flags_resolved": resolved_flags,
@@ -141,10 +149,10 @@ def update_product(session: Session, request: UpdateProductRequest) -> dict[str,
 def _validate_request(request: UpdateProductRequest, ids: list[int]) -> bool:
     """Reject an impossible request. Returns whether product coordinates are given."""
     if not ids:
-        raise UsageError("file_ids is empty.")
-    if len(ids) > MAX_FILES_PER_CALL:
+        raise UsageError("entry_ids is empty.")
+    if len(ids) > MAX_ENTRIES_PER_CALL:
         raise UsageError(
-            f"Too many files ({len(ids)}); at most {MAX_FILES_PER_CALL} per call."
+            f"Too many entries ({len(ids)}); at most {MAX_ENTRIES_PER_CALL} per call."
         )
 
     given = [
@@ -211,31 +219,45 @@ def _validate_request(request: UpdateProductRequest, ids: list[int]) -> bool:
     return coordinates
 
 
-def _load_files(session: Session, ids: list[int]) -> list[File]:
-    files = {
-        file.id: file
-        for file in session.exec(select(File).where(col(File.id).in_(ids))).all()
-    }
-    problems = [f"file {i}: no such file" for i in ids if i not in files]
+def _load_entries(session: Session, ids: list[int]) -> list[tuple[Entry, File]]:
+    found = entries_with_files(session, ids)
+    originals = file_entry_ids(
+        session,
+        [
+            file.duplicate_of_id
+            for _, file in found.values()
+            if file is not None and file.duplicate_of_id is not None
+        ],
+    )
+    problems = [f"entry {i}: no such entry" for i in ids if i not in found]
     for i in ids:
-        file = files.get(i)
-        if file is None:
+        if i not in found:
             continue
-        if file.disposition is Disposition.duplicate:
-            original = (
-                f" of file {file.duplicate_of_id}" if file.duplicate_of_id else ""
-            )
+        entry, file = found[i]
+        if entry.type is not EntryType.file or file is None:
             problems.append(
-                f"file {i}: an automatic duplicate{original}; file the original instead"
+                f"entry {i}: a {entry.type.value} entry; only files can be filed"
+            )
+        elif file.disposition is Disposition.duplicate:
+            original_id = originals.get(file.duplicate_of_id or -1)
+            original = f" of entry {original_id}" if original_id is not None else ""
+            problems.append(
+                f"entry {i}: an automatic duplicate{original}; "
+                "file the original instead"
             )
         elif file.missing_since is not None:
             problems.append(
-                f"file {i}: missing from the share since "
+                f"entry {i}: missing from the share since "
                 f"{file.missing_since:%Y-%m-%d}; run `scan` again first"
             )
     if problems:
         raise UsageError("Nothing was changed. " + "; ".join(problems) + ".")
-    return [files[i] for i in ids]
+    items = []
+    for i in ids:
+        entry, file = found[i]
+        assert file is not None
+        items.append((entry, file))
+    return items
 
 
 # -- resolving coordinates ----------------------------------------------------
@@ -448,26 +470,26 @@ def _apply_product_metadata(
 # -- review flags -------------------------------------------------------------
 
 
-def _open_flag(session: Session, file: File, reason: str) -> None:
+def _open_flag(session: Session, entry: Entry, reason: str) -> None:
     existing = session.exec(
         select(ReviewFlag)
-        .where(col(ReviewFlag.file_id) == file.id)
+        .where(col(ReviewFlag.entry_id) == entry.id)
         .where(col(ReviewFlag.resolved_at).is_(None))
     ).first()
     if existing is not None:
         existing.reason = reason.strip()
         session.add(existing)
     else:
-        assert file.id is not None
-        session.add(ReviewFlag(file_id=file.id, reason=reason.strip()))
+        assert entry.id is not None
+        session.add(ReviewFlag(entry_id=entry.id, reason=reason.strip()))
 
 
 def _resolve_flags(
-    session: Session, file: File, note: str | None, now: datetime
+    session: Session, entry: Entry, note: str | None, now: datetime
 ) -> int:
     open_flags = session.exec(
         select(ReviewFlag)
-        .where(col(ReviewFlag.file_id) == file.id)
+        .where(col(ReviewFlag.entry_id) == entry.id)
         .where(col(ReviewFlag.resolved_at).is_(None))
     ).all()
     for flag in open_flags:

@@ -10,6 +10,7 @@ from sqlmodel import DateTime, Field, SQLModel, String
 from rpg_librarian_tools.files import MediaType
 
 from .Disposition import Disposition
+from .EntryType import EntryType
 from .ProcessingStage import ProcessingStage
 from .RootKind import RootKind
 
@@ -76,6 +77,11 @@ class DispositionType(_EnumText):
     enum_class = Disposition
 
 
+class EntryTypeType(_EnumText):
+    cache_ok = True
+    enum_class = EntryType
+
+
 class RootKindType(_EnumText):
     cache_ok = True
     enum_class = RootKind
@@ -136,13 +142,41 @@ class FileMetadataBase(SQLModel):
     )
 
 
-class EvidenceBase(FileMetadataBase):
-    """Base for per-source evidence tables: one row per file, per source.
+class EntryMetadataBase(SQLModel):
+    """Base for per-entry tables, one row per entry.
+
+    `entry_id` is the primary key: each table holds at most one row per entry,
+    upserted in place. Used for what describes the catalog item rather than the
+    file's bytes (evidence, text analysis); file contents stay on `FileMetadataBase`.
+    """
+
+    entry_id: int | None = Field(
+        default=None,
+        foreign_key="entry.id",
+        nullable=False,
+        ondelete="CASCADE",
+        primary_key=True,
+    )
+
+    created_at: datetime = Field(
+        default_factory=utc_now,
+        sa_type=UTCDateTime,
+    )
+
+    updated_at: datetime = Field(
+        default_factory=utc_now,
+        sa_type=UTCDateTime,
+        sa_column_kwargs={"onupdate": utc_now},
+    )
+
+
+class EvidenceFields(SQLModel):
+    """The columns every per-source evidence table has, whatever it is keyed by.
 
     Evidence is candidate signal for the LLM, never an asserted identification. It
     records its provenance: the `query` that produced it and when it was fetched.
-    A query that found nothing still gets a row (empty `results`), so the file is
-    not queried again.
+    A query that found nothing still gets a row (empty `results`), so it is not
+    queried again.
     """
 
     query: str = Field(nullable=False)
@@ -150,3 +184,17 @@ class EvidenceBase(FileMetadataBase):
         default_factory=list, sa_type=JSON, nullable=False
     )
     fetched_at: datetime = Field(default_factory=utc_now, sa_type=UTCDateTime)
+
+
+class EvidenceBase(EvidenceFields, EntryMetadataBase):
+    """Base for per-source evidence about a catalog item: one row per entry, per source.
+
+    Every source but the ISBN lookup (see `FileEvidenceBase`).
+    """
+
+
+class FileEvidenceBase(EvidenceFields, FileMetadataBase):
+    """Base for per-source evidence read from a file's own bytes: one row per file.
+
+    Only the ISBN lookup, whose query is an identifier printed in the file.
+    """
