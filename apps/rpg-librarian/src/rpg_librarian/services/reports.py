@@ -32,6 +32,7 @@ from ..model import (
     ImageMetadata,
     IsbnResult,
     MeshMetadata,
+    Pack,
     PdfMetadata,
     Product,
     ProductLine,
@@ -44,6 +45,7 @@ from ..model import (
 )
 from ..paths import kept_file_count, sanitize_name
 from .names import normalize_name
+from .pack_info import pack_views
 from .pending import pending_changes
 
 _BOOKKEEPING = {"file_id", "entry_id", "created_at", "updated_at"}
@@ -118,7 +120,9 @@ def target_folder(session: Session, product_id: int) -> str | None:
 def report_entry(session: Session, entry_id: int) -> dict[str, Any]:
     """Report one entry; `pages_sampled` counts stored sample entries.
 
-    Today every entry is a file entry, reported with its file's details. Sample entries
+    A file entry is reported with its file's details; a pack entry with the pack's
+    summary (see `packs.pack_report_entry`), which stays small however many files the
+    pack has (`report_pack` lists them all). Sample entries
     represent physical PDF pages or one logical plain-text sample, including an empty
     plain-text sample.
     """
@@ -126,6 +130,10 @@ def report_entry(session: Session, entry_id: int) -> dict[str, Any]:
     if found is None:
         raise UsageError(f"No entry with id {entry_id}.")
     entry, file = found
+    if entry.type is EntryType.pack:
+        from .packs import pack_report_entry  # `packs` imports this module
+
+        return pack_report_entry(session, entry_id)
     if entry.type is not EntryType.file or file is None:
         raise UsageError(f"Entry {entry_id} is a {entry.type.value} entry.")
     assert file.id is not None
@@ -245,6 +253,38 @@ def _files_summary(session: Session, product_id: int) -> list[dict[str, Any]]:
     ]
 
 
+def _packs_summary(session: Session, product_id: int) -> list[dict[str, Any]]:
+    """The product's packs, each as one item: a pack is filed as a whole."""
+    ids = [
+        pack_id
+        for pack_id in session.exec(
+            select(col(Entry.pack_id)).where(col(Entry.product_id) == product_id)
+        ).all()
+        if pack_id is not None
+    ]
+    views = pack_views(session, ids)
+    analyses = {
+        a.entry_id: a
+        for a in session.exec(
+            select(FileTextAnalysis).where(
+                col(FileTextAnalysis.entry_id).in_([v.entry_id for v in views.values()])
+            )
+        ).all()
+    }
+    return [
+        {
+            "entry_id": view.entry_id,
+            "root_id": view.root_id,
+            "folder": view.folder,
+            "members": view.members,
+            "members_by_media_type": view.by_media_type,
+            "disposition": view.pack.disposition.value,
+            "text_analysis": analysis_hint(analyses.get(view.entry_id), truncate=True),
+        }
+        for view in sorted(views.values(), key=lambda v: (v.root_id, v.folder))
+    ]
+
+
 def report_product(
     session: Session,
     *,
@@ -283,10 +323,15 @@ def report_product(
     ref = product_ref(session, row.id)
     assert ref is not None
     files = _files_summary(session, row.id)
+    packs = _packs_summary(session, row.id)
     by_disposition: dict[str, int] = {}
     for item in files:
         by_disposition[item["disposition"]] = (
             by_disposition.get(item["disposition"], 0) + 1
+        )
+    for item in packs:  # a pack's members count under the pack's disposition
+        by_disposition[item["disposition"]] = (
+            by_disposition.get(item["disposition"], 0) + item["members"]
         )
     return {
         "product": {
@@ -295,6 +340,7 @@ def report_product(
             "type": ref["type"],
         },
         "files": files,
+        **({"packs": packs} if packs else {}),
         "files_by_disposition": by_disposition,
         "target_folder": target_folder(session, row.id),
         "pending_changes": pending_changes(session),
@@ -353,11 +399,21 @@ def report_line(
         .order_by(col(Product.name))
     ).all():
         assert product.id is not None
-        counts = session.exec(
-            select(col(File.disposition))
-            .join(Entry, col(Entry.file_id) == col(File.id))
-            .where(col(Entry.product_id) == product.id)
-        ).all()
+        counts = [
+            *session.exec(
+                select(col(File.disposition))
+                .join(Entry, col(Entry.file_id) == col(File.id))
+                .where(col(Entry.product_id) == product.id)
+            ).all(),
+            # A pack's members count once each, under the pack's disposition.
+            *session.exec(
+                select(col(Pack.disposition))
+                .select_from(File)
+                .join(Pack, col(Pack.id) == col(File.pack_id))
+                .join(Entry, col(Entry.pack_id) == col(Pack.id))
+                .where(col(Entry.product_id) == product.id)
+            ).all(),
+        ]
         products.append(
             {
                 "id": product.id,

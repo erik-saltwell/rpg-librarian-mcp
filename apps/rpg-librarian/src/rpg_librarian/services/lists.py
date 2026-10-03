@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -15,6 +16,7 @@ from ..model import (
     Entry,
     File,
     FileTextAnalysis,
+    Pack,
     PdfMetadata,
     Product,
     ProductLine,
@@ -24,6 +26,7 @@ from ..model import (
     Root,
 )
 from .names import normalize_name
+from .pack_info import PackView, pack_views
 from .reports import analysis_hint
 
 DEFAULT_LIMIT = 100
@@ -54,13 +57,14 @@ def list_unfiled(
     include_flagged: bool = False,
     limit: int = DEFAULT_LIMIT,
 ) -> dict[str, Any]:
-    """The worklist of files no one has filed yet.
+    """The worklist of files and packs no one has filed yet.
 
-    Without `folder`: every folder that holds unfiled files, with counts. With
-    `folder`: that folder's own unfiled files plus its subfolders (all descendants
-    when `recursive`). Files already resolved never appear: automatic duplicates,
-    files missing from the share, and, unless `include_flagged`, files the LLM
-    deferred with an open review flag.
+    Without `folder`: every folder that holds unfiled files or packs, with counts. With
+    `folder`: that folder's own unfiled files and packs plus its subfolders (all
+    descendants when `recursive`). Files already resolved never appear: automatic
+    duplicates, files missing from the share, pack members (their pack is the item),
+    and, unless `include_flagged`, items the LLM deferred with an open review flag. A
+    pack is listed in the folder that is its current root.
     """
     if limit < 1:
         raise UsageError("limit must be at least 1.")
@@ -87,6 +91,7 @@ def list_unfiled(
     rows = session.exec(statement).all()
     files = [file for file, _ in rows]
     entry_of = {file.id: entry.id for file, entry in rows}
+    packs = _unfiled_packs(session, root_id, include_flagged)
 
     direct: dict[tuple[int, str], int] = defaultdict(int)
     subtree: dict[tuple[int, str], int] = defaultdict(int)
@@ -96,6 +101,14 @@ def list_unfiled(
         parts = PurePosixPath(where).parts if where else ()
         for depth in range(len(parts) + 1):
             subtree[(file.root_id, "/".join(parts[:depth]))] += 1
+    direct_packs: dict[tuple[int, str], int] = defaultdict(int)
+    subtree_packs: dict[tuple[int, str], int] = defaultdict(int)
+    for view in packs:
+        direct_packs[(view.root_id, view.folder)] += 1
+        parts = PurePosixPath(view.folder).parts if view.folder else ()
+        for depth in range(len(parts) + 1):
+            subtree_packs[(view.root_id, "/".join(parts[:depth]))] += 1
+    folders_with_items = sorted(set(subtree) | set(subtree_packs))
 
     wanted = _clean_folder(folder)
     if wanted is None:
@@ -105,20 +118,31 @@ def list_unfiled(
                 "root_kind": roots[rid].kind.value,
                 "folder": where,
                 "direct_files": direct.get((rid, where), 0),
-                "subtree_files": count,
+                "subtree_files": subtree.get((rid, where), 0),
+                **(
+                    {
+                        "direct_packs": direct_packs.get((rid, where), 0),
+                        "subtree_packs": subtree_packs[(rid, where)],
+                    }
+                    if (rid, where) in subtree_packs
+                    else {}
+                ),
             }
-            for (rid, where), count in sorted(subtree.items())
+            for rid, where in folders_with_items
         ]
         return {
             "total_unfiled_files": len(files),
+            "total_unfiled_packs": len(packs),
             "folders": entries[:limit],
             "truncated": len(entries) > limit,
         }
 
-    matching_roots = sorted({rid for (rid, where) in subtree if where == wanted})
+    matching_roots = sorted(
+        {rid for (rid, where) in folders_with_items if where == wanted}
+    )
     if root_id is None and len(matching_roots) > 1:
         raise UsageError(
-            f"Folder {wanted!r} has unfiled files in roots {matching_roots}; "
+            f"Folder {wanted!r} has unfiled items in roots {matching_roots}; "
             "pass root_id."
         )
     if not matching_roots:
@@ -126,6 +150,7 @@ def list_unfiled(
             "root_id": root_id,
             "folder": wanted,
             "files": [],
+            "packs": [],
             "subfolders": [],
             "total_files": 0,
             "truncated": False,
@@ -167,13 +192,28 @@ def list_unfiled(
         ).all()
     )
 
+    pack_scope = [
+        view
+        for view in packs
+        if view.root_id == chosen
+        and (_is_within(view.folder, wanted) if recursive else view.folder == wanted)
+    ]
+    pack_analyses = {
+        a.entry_id: a
+        for a in session.exec(
+            select(FileTextAnalysis).where(
+                col(FileTextAnalysis.entry_id).in_([v.entry_id for v in pack_scope])
+            )
+        ).all()
+    }
+
     prefix = wanted + "/" if wanted else ""
-    children: dict[str, int] = defaultdict(int)
-    for (rid, where), count in subtree.items():
+    children: list[str] = []
+    for rid, where in folders_with_items:
         if rid == chosen and where != wanted and where.startswith(prefix):
             first = where[len(prefix) :].split("/", 1)[0]
             if where == prefix + first:
-                children[where] = count
+                children.append(where)
     return {
         "root_id": chosen,
         "root_kind": roots[chosen].kind.value,
@@ -196,13 +236,68 @@ def list_unfiled(
             }
             for f in page
         ],
+        "packs": [
+            {
+                "entry_id": view.entry_id,
+                "folder": view.folder,
+                "members": view.members,
+                "members_by_media_type": view.by_media_type,
+                "text_analysis": analysis_hint(
+                    pack_analyses.get(view.entry_id), truncate=True
+                ),
+                **({"open_review_flag": view.flagged} if include_flagged else {}),
+            }
+            for view in pack_scope
+        ],
         "subfolders": [
-            {"folder": name, "subtree_files": count}
-            for name, count in sorted(children.items())
+            {
+                "folder": name,
+                "subtree_files": subtree.get((chosen, name), 0),
+                **(
+                    {"subtree_packs": subtree_packs[(chosen, name)]}
+                    if (chosen, name) in subtree_packs
+                    else {}
+                ),
+            }
+            for name in sorted(children)
         ],
         "total_files": len(in_scope),
         "truncated": len(in_scope) > limit,
     }
+
+
+@dataclass
+class _UnfiledPack(PackView):
+    flagged: bool = False
+
+
+def _unfiled_packs(
+    session: Session, root_id: int | None, include_flagged: bool
+) -> list[_UnfiledPack]:
+    """Unfiled packs with at least one present member, in folder order."""
+    ids = [
+        pack_id
+        for pack_id in session.exec(
+            select(col(Pack.id)).where(col(Pack.disposition) == Disposition.unfiled)
+        ).all()
+        if pack_id is not None
+    ]
+    views = pack_views(session, ids)
+    flagged = set(
+        session.exec(
+            select(col(ReviewFlag.entry_id))
+            .where(col(ReviewFlag.entry_id).in_([v.entry_id for v in views.values()]))
+            .where(col(ReviewFlag.resolved_at).is_(None))
+        ).all()
+    )
+    out = [
+        _UnfiledPack(**vars(view), flagged=view.entry_id in flagged)
+        for view in views.values()
+        if view.members > 0
+        and (root_id is None or view.root_id == root_id)
+        and (include_flagged or view.entry_id not in flagged)
+    ]
+    return sorted(out, key=lambda v: (v.root_id, v.folder, v.entry_id))
 
 
 def list_product_types(session: Session) -> dict[str, Any]:
@@ -223,17 +318,27 @@ def list_product_types(session: Session) -> dict[str, Any]:
             .group_by(col(ProductLine.product_type_id))
         ).all()
     )
-    kept = dict(
-        session.exec(
-            select(col(ProductLine.product_type_id), func.count())
-            .select_from(File)
-            .join(Entry, col(Entry.file_id) == col(File.id))
-            .join(Product, col(Product.id) == col(Entry.product_id))
-            .join(ProductLine, col(ProductLine.id) == col(Product.product_line_id))
-            .where(col(File.disposition) == Disposition.keep)
-            .group_by(col(ProductLine.product_type_id))
-        ).all()
-    )
+    kept: dict[int, int] = defaultdict(int)
+    for statement in (
+        select(col(ProductLine.product_type_id), func.count())
+        .select_from(File)
+        .join(Entry, col(Entry.file_id) == col(File.id))
+        .join(Product, col(Product.id) == col(Entry.product_id))
+        .join(ProductLine, col(ProductLine.id) == col(Product.product_line_id))
+        .where(col(File.disposition) == Disposition.keep)
+        .group_by(col(ProductLine.product_type_id)),
+        # Members of kept packs are kept files too.
+        select(col(ProductLine.product_type_id), func.count())
+        .select_from(File)
+        .join(Pack, col(Pack.id) == col(File.pack_id))
+        .join(Entry, col(Entry.pack_id) == col(Pack.id))
+        .join(Product, col(Product.id) == col(Entry.product_id))
+        .join(ProductLine, col(ProductLine.id) == col(Product.product_line_id))
+        .where(col(Pack.disposition) == Disposition.keep)
+        .group_by(col(ProductLine.product_type_id)),
+    ):
+        for type_id, count in session.exec(statement).all():
+            kept[type_id] += count
     return {
         "types": [
             {

@@ -1,8 +1,11 @@
 """`update_product`: the one writer. Records the LLM's judgment in the catalog.
 
-It takes entry ids. A file entry's disposition is on its `file`; its product link is
-on the `entry`. `keep` requires a product: that rule is enforced here, because the two
-values live in different tables and no CHECK constraint can span them.
+It takes entry ids, of files or packs. A file entry's disposition is on its `file`, a
+pack entry's on its `pack`; the product link is on the `entry` either way. `keep`
+requires a product: that rule is enforced here, because the two values live in
+different tables and no CHECK constraint can span them. So is the rule that a product
+has at most one *kept* pack (a superseded earlier version may share it): a pack is the
+product, so two kept packs would collide in its folder.
 
 One call is one transaction: every check runs before anything is kept, and any
 failure raises `UsageError` so the caller rolls the whole call back, naming what
@@ -16,15 +19,17 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import Any
 
+from sqlalchemy import update
 from sqlmodel import Session, col, select
 
-from ..entries import entries_with_files, file_entry_ids
+from ..entries import entries_with_files, entries_with_packs, file_entry_ids
 from ..errors import UsageError
 from ..model import (
     Disposition,
     Entry,
     EntryType,
     File,
+    Pack,
     Product,
     ProductLine,
     ProductLineAlias,
@@ -92,21 +97,33 @@ def update_product(session: Session, request: UpdateProductRequest) -> dict[str,
         Disposition.unfiled if request.review_flag is not None else request.disposition
     )
     assert final is not None
+    if final is Disposition.keep and product is not None:
+        _check_one_kept_pack(session, items, product)
     resolved_flags = 0
     now = datetime.now(UTC)
-    for entry, file in items:
+    for entry, file, pack in items:
         if request.review_flag is not None:
             _open_flag(session, entry, request.review_flag)
             continue
-        previous = (file.disposition, entry.product_id)
-        file.disposition = final
+        holder = file if file is not None else pack
+        assert holder is not None
+        previous = (holder.disposition, entry.product_id)
+        holder.disposition = final
         if final is Disposition.unfiled:
             entry.product_id = None
         elif product is not None:
             entry.product_id = product.id
-        if (file.disposition, entry.product_id) != previous:
-            file.subpath = None  # its place in the old product no longer applies
-        session.add(file)
+        if (holder.disposition, entry.product_id) != previous:
+            # Its place in the old product no longer applies.
+            if file is not None:
+                file.subpath = None
+            else:
+                session.exec(
+                    update(File)
+                    .where(col(File.pack_id) == holder.id)
+                    .values(subpath=None)
+                )
+        session.add(holder)
         session.add(entry)
         if final is not Disposition.unfiled:
             resolved_flags += _resolve_flags(session, entry, request.note, now)
@@ -219,8 +236,43 @@ def _validate_request(request: UpdateProductRequest, ids: list[int]) -> bool:
     return coordinates
 
 
-def _load_entries(session: Session, ids: list[int]) -> list[tuple[Entry, File]]:
+def _check_one_kept_pack(
+    session: Session,
+    items: list[tuple[Entry, File | None, Pack | None]],
+    product: Product,
+) -> None:
+    """Refuse a second kept pack for one product: the pack is the product, so two kept
+    packs would share (and collide in) its folder."""
+    ours = [pack.id for _, _, pack in items if pack is not None]
+    if len(ours) > 1:
+        raise UsageError(
+            "Nothing was changed. A product holds at most one kept pack, and this call "
+            f"keeps {len(ours)} packs under {product.name!r}. Merge them first "
+            "(add-to-pack moves one pack's files into the other)."
+        )
+    if not ours:
+        return
+    other = session.exec(
+        select(Entry)
+        .join(Pack, col(Pack.id) == col(Entry.pack_id))
+        .where(col(Entry.product_id) == product.id)
+        .where(col(Pack.disposition) == Disposition.keep)
+        .where(col(Pack.id).not_in(ours))
+    ).first()
+    if other is not None:
+        raise UsageError(
+            f"Nothing was changed. Product {product.name!r} already has a kept pack "
+            f"(entry {other.id}). A product holds at most one kept pack: merge this "
+            "pack into it with add-to-pack, or keep it under another product. (A "
+            "superseded earlier version may share the product.)"
+        )
+
+
+def _load_entries(
+    session: Session, ids: list[int]
+) -> list[tuple[Entry, File | None, Pack | None]]:
     found = entries_with_files(session, ids)
+    packs = entries_with_packs(session, ids)
     originals = file_entry_ids(
         session,
         [
@@ -234,9 +286,13 @@ def _load_entries(session: Session, ids: list[int]) -> list[tuple[Entry, File]]:
         if i not in found:
             continue
         entry, file = found[i]
-        if entry.type is not EntryType.file or file is None:
+        if entry.type is EntryType.pack:
+            if packs[i][1] is None:
+                problems.append(f"entry {i}: its pack no longer exists")
+        elif entry.type is not EntryType.file or file is None:
             problems.append(
-                f"entry {i}: a {entry.type.value} entry; only files can be filed"
+                f"entry {i}: a {entry.type.value} entry; only files and packs can be "
+                "filed"
             )
         elif file.disposition is Disposition.duplicate:
             original_id = originals.get(file.duplicate_of_id or -1)
@@ -252,11 +308,10 @@ def _load_entries(session: Session, ids: list[int]) -> list[tuple[Entry, File]]:
             )
     if problems:
         raise UsageError("Nothing was changed. " + "; ".join(problems) + ".")
-    items = []
+    items: list[tuple[Entry, File | None, Pack | None]] = []
     for i in ids:
         entry, file = found[i]
-        assert file is not None
-        items.append((entry, file))
+        items.append((entry, file, packs[i][1]))
     return items
 
 

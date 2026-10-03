@@ -1,10 +1,11 @@
 """`enrich`: gather candidate evidence for files already in the catalog.
 
-Every source writes one row per file: the query used, the results, and when they
-were fetched. A query that finds nothing still writes a row, so the file is not
-asked again. A failure writes an `error` row and no evidence row, so it is retried
-on the next run. A source that becomes unusable (bad key, exhausted quota) stops for
-the rest of the run instead of failing every remaining file.
+Every source writes one row per entry (a file, or a pack: one lookup for all its
+members, from its folder names and its members' pooled text): the query used, the
+results, and when they were fetched. A query that finds nothing still writes a row, so
+the entry is not asked again. A failure writes an `error` row and no evidence row, so
+it is retried on the next run. A source that becomes unusable (bad key, exhausted
+quota) stops for the rest of the run instead of failing every remaining entry.
 
 Evidence is candidate signal for the LLM session, never an asserted identification.
 """
@@ -12,17 +13,18 @@ Evidence is candidate signal for the LLM session, never an asserted identificati
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from sqlalchemy import exists
 from sqlmodel import Session, col, select
 
 from ..db import session_scope
 from ..enrichment.base import FatalSourceError, Source
-from ..enrichment.queries import FileContext
+from ..enrichment.queries import FileContext, PackFacts
 from ..enrichment.registry import SOURCES
-from ..entries import row_key
+from ..entries import keyed_by_entry
 from ..error_rows import clear_error, record_error
 from ..errors import UsageError
 from ..model import (
@@ -33,11 +35,16 @@ from ..model import (
     FileMetadata,
     FileText,
     FileTextAnalysis,
+    Pack,
     Root,
 )
 from ..model.core import EntryMetadataBase, FileMetadataBase
 from ..observability import FileTracker, log_call_fields
 from ..progress import track
+from ..services.pack_info import pack_views
+
+# A pack's pooled text: its members' samples, documents first, up to this many chars.
+POOLED_TEXT_CHARS = 12_000
 
 
 @dataclass
@@ -73,7 +80,8 @@ def _eligible(session: Session, source: Source, force: bool) -> list[FileContext
         statement = statement.where(~exists().where(covered))
 
     contexts = []
-    for file, entry, metadata, text in session.exec(statement).all():
+    rows = session.exec(statement).all()
+    for file, entry, metadata, text in rows:
         assert file.id is not None and entry.id is not None
         contexts.append(
             FileContext(
@@ -87,7 +95,98 @@ def _eligible(session: Session, source: Source, force: bool) -> list[FileContext
                 sample_pages=(text.sample_pages or {}) if text else None,
             )
         )
+    if issubclass(source.table, EntryMetadataBase):
+        contexts += _pack_contexts(session, source, force, roots)
     return contexts
+
+
+def _pack_contexts(
+    session: Session, source: Source, force: bool, roots: dict[int | None, str]
+) -> list[FileContext]:
+    """Packs a source has not yet covered, as contexts, in entry order."""
+    table = source.table
+    assert issubclass(table, EntryMetadataBase)
+    statement = (
+        select(Pack, Entry)
+        .join(Entry, col(Entry.pack_id) == col(Pack.id))
+        .order_by(col(Entry.id))
+    )
+    if not force:
+        statement = statement.where(
+            ~exists().where(col(table.entry_id) == col(Entry.id))
+        )
+    rows = session.exec(statement).all()
+    views = pack_views(session, [pack.id for pack, _ in rows if pack.id is not None])
+    contexts = []
+    for pack, entry in rows:
+        assert pack.id is not None and entry.id is not None
+        view = views[pack.id]
+        if view.members == 0:
+            continue  # every member is missing from the share
+        members = session.exec(
+            select(File, FileMetadata, FileText)
+            .join(FileMetadata, col(FileMetadata.file_id) == col(File.id), isouter=True)
+            .join(FileText, col(FileText.file_id) == col(File.id), isouter=True)
+            .where(col(File.pack_id) == pack.id)
+            .where(col(File.missing_since).is_(None))
+            .order_by(col(File.relative_path))
+        ).all()
+        folder = PurePosixPath(view.folder)
+        titles = tuple(
+            metadata.title
+            for file, metadata, _ in members
+            if metadata is not None
+            and metadata.title
+            and file.media_type is not None
+            and file.media_type.value == "pdf"
+            and not file.relative_path.lower().endswith(".ai")
+        )
+        root_path = roots[view.root_id]
+        contexts.append(
+            FileContext(
+                file_id=None,
+                entry_id=entry.id,
+                path=str(Path(root_path) / view.folder),
+                relative_path=view.folder,
+                sample_pages=_pooled_text(view.folder, members),
+                pack=PackFacts(
+                    root_folder=folder.name or Path(root_path).name,
+                    parent_folder=""
+                    if str(folder.parent) == "."
+                    else folder.parent.name,
+                    member_titles=titles,
+                ),
+            )
+        )
+    return contexts
+
+
+def _pooled_text(
+    folder: str, members: Sequence[tuple[File, FileMetadata | None, FileText | None]]
+) -> dict[str, str] | None:
+    """Members' text samples, documents first, keyed "<path in pack>#<page>", capped at
+    `POOLED_TEXT_CHARS`. None when no member has a sample."""
+    sampled = [(file, text) for file, _, text in members if text is not None]
+    if not sampled:
+        return None
+    sampled.sort(
+        key=lambda pair: (
+            pair[0].media_type is None
+            or pair[0].media_type.value not in ("pdf", "text"),
+            pair[0].relative_path,
+        )
+    )
+    pooled: dict[str, str] = {}
+    room = POOLED_TEXT_CHARS
+    for file, text in sampled:
+        path = PurePosixPath(file.relative_path)
+        name = str(path.relative_to(folder)) if folder else str(path)
+        for page, content in (text.sample_pages or {}).items():
+            if room <= 0:
+                return pooled
+            pooled[f"{name}#{page}"] = content[:room]
+            room -= len(pooled[f"{name}#{page}"])
+    return pooled
 
 
 def _has_results(row: EntryMetadataBase | FileMetadataBase) -> bool:
@@ -114,9 +213,7 @@ def _run_source(
         # A source's rules can change. Rows it holds for files it no longer wants
         # (evidence from an earlier, noisier rule) are stale: drop them.
         for context in everything:
-            key = row_key(
-                source.table, file_id=context.file_id, entry_id=context.entry_id
-            )
+            key = context.entry_id if keyed_by_entry(source.table) else context.file_id
             stale = None if source.wants(context) else session.get(source.table, key)
             if stale is not None:
                 session.delete(stale)
@@ -147,6 +244,7 @@ def _run_source(
                     if isinstance(row, EntryMetadataBase):
                         row.entry_id = context.entry_id
                     else:
+                        assert context.file_id is not None  # packs have no file rows
                         row.file_id = context.file_id
                     session.merge(row)
                     clear_error(session, context.entry_id, source.stage)

@@ -11,11 +11,16 @@ from .File import File
 from .FileMetadata import FileMetadata
 from .FileText import FileText
 from .FileTextAnalysis import FileTextAnalysis
+from .FolderJudgment import FolderJudgment
+from .FolderOutcome import FolderOutcome
+from .FolderSearch import FolderSearch
 from .GoogleSearchResult import GoogleSearchResult
 from .ImageMetadata import ImageMetadata
 from .IsbnResult import IsbnResult
 from .LengthUnit import LengthUnit
 from .MeshMetadata import MeshMetadata
+from .Pack import Pack
+from .PackFormation import PackFormation
 from .PdfMetadata import PdfMetadata
 from .ProcessingStage import ProcessingStage
 from .Product import Product
@@ -43,11 +48,16 @@ __all__ = [
     "FileMetadata",
     "FileText",
     "FileTextAnalysis",
+    "FolderJudgment",
+    "FolderOutcome",
+    "FolderSearch",
     "GoogleSearchResult",
     "ImageMetadata",
     "IsbnResult",
     "LengthUnit",
     "MeshMetadata",
+    "Pack",
+    "PackFormation",
     "PdfMetadata",
     "ProcessingStage",
     "Product",

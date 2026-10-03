@@ -9,7 +9,13 @@ from rpg_librarian_tools.errors import AuthenticationError, RateLimitError
 from ..model import DtrpgResult, ProcessingStage
 from ..observability import log_file_fields
 from .base import FatalSourceError
-from .queries import FileContext, is_product_document, name_ladder, try_queries
+from .queries import (
+    FileContext,
+    is_product_document,
+    name_ladder,
+    pack_ladder,
+    try_queries,
+)
 
 _ENV = "DTRPG_API_KEY"
 _HITS = 5
@@ -17,7 +23,7 @@ _MAX_DESCRIPTION = 1000
 
 
 class DtrpgSource:
-    """DriveThruRPG catalog search by name, for product documents (PDFs) only."""
+    """DriveThruRPG catalog search by name, for product documents (PDFs) and packs."""
 
     name = "dtrpg"
     stage = ProcessingStage.dtrpg
@@ -30,10 +36,10 @@ class DtrpgSource:
         pass
 
     def wants(self, context: FileContext) -> bool:
-        return is_product_document(context)
+        return is_product_document(context) or context.pack is not None
 
     def fetch(self, context: FileContext) -> DtrpgResult | None:
-        queries = name_ladder(context)
+        queries = pack_ladder(context.pack) if context.pack else name_ladder(context)
         if not queries:
             return None
         api_key = os.environ[_ENV]

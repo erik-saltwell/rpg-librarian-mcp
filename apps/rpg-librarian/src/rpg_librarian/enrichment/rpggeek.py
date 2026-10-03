@@ -15,6 +15,7 @@ from .queries import (
     comparable_name,
     is_product_document,
     name_ladder,
+    pack_ladder,
     try_queries,
 )
 
@@ -47,11 +48,12 @@ class RpggeekSource:
         pass
 
     def wants(self, context: FileContext) -> bool:
-        return is_product_document(context)
+        return is_product_document(context) or context.pack is not None
 
     def fetch(self, context: FileContext) -> RpggeekResult | None:
         token = os.environ.get(_ENV)
-        queries = [q for q in (context.isbn, *name_ladder(context)) if q]
+        ladder = pack_ladder(context.pack) if context.pack else name_ladder(context)
+        queries = [q for q in (context.isbn, *ladder) if q]
         if not queries:
             return None
         try:

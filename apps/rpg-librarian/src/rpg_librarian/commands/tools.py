@@ -12,7 +12,8 @@ from typing import Any
 
 from ..db import session_scope
 from ..model import Disposition
-from ..services import lists, reports
+from ..services import lists, packs, reports
+from ..services.clear_errors import clear_errors as apply_clear_errors
 from ..services.serialize import to_jsonable
 from ..services.update_product import PRODUCT_METADATA_FIELDS, UpdateProductRequest
 from ..services.update_product import update_product as apply_update_product
@@ -44,6 +45,11 @@ def update_product(args: argparse.Namespace, catalog_path: Path) -> int:
     )
     with session_scope(catalog_path) as session:
         return _emit(apply_update_product(session, request))
+
+
+def clear_errors(args: argparse.Namespace, catalog_path: Path) -> int:
+    with session_scope(catalog_path) as session:
+        return _emit(apply_clear_errors(session, args.stage))
 
 
 def report_entry(args: argparse.Namespace, catalog_path: Path) -> int:
@@ -86,6 +92,47 @@ def list_unfiled(args: argparse.Namespace, catalog_path: Path) -> int:
                 recursive=args.recursive,
                 include_flagged=args.include_flagged,
                 limit=args.limit,
+            )
+        )
+
+
+def report_pack(args: argparse.Namespace, catalog_path: Path) -> int:
+    with session_scope(catalog_path) as session:
+        return _emit(packs.report_pack(session, args.entry_id))
+
+
+def create_pack(args: argparse.Namespace, catalog_path: Path) -> int:
+    with session_scope(catalog_path) as session:
+        return _emit(
+            packs.create_pack(
+                session,
+                folder=args.folder,
+                root_id=args.root_id,
+                disposition=Disposition(args.disposition) if args.disposition else None,
+                product_type=args.product_type,
+                product_line=args.product_line,
+                product=args.product,
+                create_line=args.create_line,
+                create_type=args.create_type,
+                reason=args.reason,
+            )
+        )
+
+
+def add_to_pack(args: argparse.Namespace, catalog_path: Path) -> int:
+    with session_scope(catalog_path) as session:
+        return _emit(
+            packs.add_to_pack(
+                session, entry_id=args.entry_id, path=args.path, root_id=args.root_id
+            )
+        )
+
+
+def remove_from_pack(args: argparse.Namespace, catalog_path: Path) -> int:
+    with session_scope(catalog_path) as session:
+        return _emit(
+            packs.remove_from_pack(
+                session, entry_id=args.entry_id, path=args.path, root_id=args.root_id
             )
         )
 

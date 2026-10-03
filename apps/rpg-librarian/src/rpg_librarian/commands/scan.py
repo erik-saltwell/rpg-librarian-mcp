@@ -12,6 +12,18 @@ location); a match against a present row makes the newer copy a `duplicate`.
 Rows whose path is under the library's `.trash/` are never walked and never marked
 missing, but they stay in the join, so a discarded file that reappears in a later
 dump is flagged as a duplicate rather than raised as a new question.
+
+Pack members (files with `pack_id` and no entry of their own) stay in their pack when
+rescanned, even with changed content: the pack's decision is about the pack. Only
+their per-file rows are replaced. A member that fails a scan stage is taken out of its
+pack and gets its own entry, so the error is visible and retried like any other. A
+member is never demoted to a duplicate: membership stands like a filing decision.
+
+A *new* file (not a move, not a duplicate) that arrives below a pack's root joins that
+pack without any LLM call: the deepest pack whose current root (where its members are)
+or original root (where it was formed) holds the file's folder. A pack whose root is a
+whole root folder is never joined this way. A file someone removed from a pack is not
+new, so it never rejoins.
 """
 
 from __future__ import annotations
@@ -31,11 +43,12 @@ from rpg_librarian_tools.identifiers import IdentifierKind, find_publication_ide
 from rpg_librarian_tools.pdf import extract_text, scan_identifiers
 
 from ..db import session_scope
-from ..entries import ensure_file_entry, file_entry, file_entry_id, row_key
+from ..entries import ensure_file_entry, optional_file_entry, row_key
 from ..error_rows import clear_error, record_error
 from ..errors import UsageError
 from ..infrastructure.isolated_worker import IsolatedWorkerPool, WorkerPool
 from ..infrastructure.walk import walk_files
+from ..membership import join, own_entry
 from ..metadata.extractors import generate_extractor
 from ..metadata.extractors.pdf_extractor import PdfExtractor
 from ..model import (
@@ -52,6 +65,7 @@ from ..model import (
     ImageMetadata,
     IsbnResult,
     MeshMetadata,
+    Pack,
     PdfMetadata,
     ProcessingStage,
     Root,
@@ -117,6 +131,8 @@ class ScanStats:
     duplicates: int = 0
     missing: int = 0
     errored: int = 0
+    detached: int = 0  # pack members taken out of their pack by a scan error
+    joined: int = 0  # new files that joined the pack whose folder they arrived in
     unreachable_roots: list[str] = field(default_factory=list)
 
 
@@ -131,6 +147,8 @@ class Scanner:
         self._local_copy = ""
         self._share_path = ""
         self.library_root_id: int | None = None
+        # Per root: (pack root folder, pack id), deepest first; see `_pack_for`.
+        self._pack_roots: dict[int, list[tuple[str, int]]] | None = None
 
     # -- roots ---------------------------------------------------------------
 
@@ -258,7 +276,6 @@ class Scanner:
                 file.missing_since = None
                 self.session.add(file)
                 self.session.flush()
-                ensure_file_entry(self.session, file)
                 self._record_error(file, ProcessingStage.scan, error)
                 self.stats.errored += 1
                 return file
@@ -272,6 +289,7 @@ class Scanner:
                 if moved is not None:
                     return self._apply_move(moved, root, relative, size, mtime, now)
 
+            is_new = existing is None
             file = existing or self._new_row(root, relative, size, mtime)
             content_changed = (
                 file.sha256 is not None and file.sha256 != inspection.sha256
@@ -283,7 +301,8 @@ class Scanner:
             file.media_type = inspection.media_type
             self.session.add(file)
             self.session.flush()
-            ensure_file_entry(self.session, file)
+            if file.pack_id is None:
+                ensure_file_entry(self.session, file)
             if content_changed:
                 self._reset_judgment(file)
 
@@ -291,6 +310,8 @@ class Scanner:
             self._clear_scan_rows(file)
             self._extract(file, local, inspection.media_type)
             self._join_duplicates(file)
+            if is_new:
+                self._auto_join(file)
             return file
         finally:
             local.unlink(missing_ok=True)
@@ -302,19 +323,28 @@ class Scanner:
         )
 
     def _reset_judgment(self, file: File) -> None:
-        """Different content at the same path invalidates every earlier decision."""
+        """Different content at the same path invalidates every earlier decision.
+
+        Except a pack member's: it stays in its pack, whose decision is about the pack,
+        and only its file-level evidence (the ISBN lookup) goes.
+        """
         assert file.id is not None
-        entry = file_entry(self.session, file.id)
-        assert entry.id is not None
-        file.disposition = Disposition.unfiled
+        entry = optional_file_entry(self.session, file.id)
         file.duplicate_of_id = None
-        entry.product_id = None
-        self.session.add(entry)
-        for table in _EVIDENCE_TABLES:
-            key = row_key(table, file_id=file.id, entry_id=entry.id)
-            row = self.session.get(table, key)
+        if entry is None:  # a pack member
+            row = self.session.get(IsbnResult, file.id)
             if row is not None:
                 self.session.delete(row)
+        else:
+            assert entry.id is not None
+            file.disposition = Disposition.unfiled
+            entry.product_id = None
+            self.session.add(entry)
+            for table in _EVIDENCE_TABLES:
+                key = row_key(table, file_id=file.id, entry_id=entry.id)
+                row = self.session.get(table, key)
+                if row is not None:
+                    self.session.delete(row)
         for other in self.session.exec(
             select(File).where(col(File.duplicate_of_id) == file.id)
         ).all():
@@ -419,8 +449,14 @@ class Scanner:
     def _record_error(
         self, file: File, stage: ProcessingStage, error: Exception
     ) -> None:
+        """Record a failure on the file's own entry; a pack member is taken out of its
+        pack first, since a member has no entry to hold the error."""
         assert file.id is not None
-        entry_id = file_entry_id(self.session, file.id)
+        if file.pack_id is not None:
+            self.stats.detached += 1
+            log_file_fields(detached_from_pack=file.pack_id)
+        entry_id = own_entry(self.session, file).id
+        assert entry_id is not None
         text = record_error(self.session, entry_id, stage, error).replace(
             self._local_copy, self._share_path
         )
@@ -438,20 +474,77 @@ class Scanner:
 
     def _clear_errors(self, file: File) -> None:
         assert file.id is not None
-        entry_id = file_entry_id(self.session, file.id)
+        entry = optional_file_entry(self.session, file.id)
+        if entry is None:  # a pack member has no entry, so no errors
+            return
+        assert entry.id is not None
         for stage in _SCAN_STAGES:
-            clear_error(self.session, entry_id, stage)
+            clear_error(self.session, entry.id, stage)
 
     def _clear_scan_rows(self, file: File) -> None:
         assert file.id is not None
-        entry_id = file_entry_id(self.session, file.id)
-        for table in (*_SCAN_TABLES, FileTextAnalysis):
-            row = self.session.get(
-                table, row_key(table, file_id=file.id, entry_id=entry_id)
-            )
+        entry = optional_file_entry(self.session, file.id)
+        for table in _SCAN_TABLES:
+            row = self.session.get(table, file.id)
+            if row is not None:
+                self.session.delete(row)
+        if entry is not None:  # a member's text analysis is its pack's
+            assert entry.id is not None
+            row = self.session.get(FileTextAnalysis, entry.id)
             if row is not None:
                 self.session.delete(row)
         self.session.flush()
+
+    # -- packs ---------------------------------------------------------------
+
+    def _pack_for(self, file: File) -> Pack | None:
+        """The deepest pack whose current or original root holds the file's folder."""
+        if self._pack_roots is None:
+            from ..services.pack_info import pack_views
+
+            roots: dict[int, set[tuple[str, int]]] = {}
+            for pack_id, view in pack_views(self.session).items():
+                places = {(view.pack.root_id, view.pack.original_root_path)}
+                # A one-member pack's derived root is just that file's folder (a kept
+                # one sits flat in its line folder): never join through it.
+                if view.members >= 2:
+                    places.add((view.root_id, view.folder))
+                for root_id, folder in places:
+                    if folder:  # never a whole root
+                        roots.setdefault(root_id, set()).add((folder, pack_id))
+            self._pack_roots = {
+                root_id: sorted(found, key=lambda f: -len(PurePosixPath(f[0]).parts))
+                for root_id, found in roots.items()
+            }
+        folder = PurePosixPath(file.relative_path).parent
+        for pack_folder, pack_id in self._pack_roots.get(file.root_id, []):
+            if folder == PurePosixPath(pack_folder) or folder.is_relative_to(
+                pack_folder
+            ):
+                pack = self.session.get(Pack, pack_id)
+                if pack is not None:
+                    return pack
+        return None
+
+    def _auto_join(self, file: File) -> None:
+        """A new file below a pack's root joins it (not a duplicate, no error)."""
+        if file.pack_id is not None or file.disposition is not Disposition.unfiled:
+            return  # a duplicate (or already placed)
+        assert file.id is not None
+        entry = optional_file_entry(self.session, file.id)
+        if (
+            entry is not None
+            and self.session.exec(
+                select(Error.entry_id).where(col(Error.entry_id) == entry.id)
+            ).first()
+        ):
+            return  # a failed file stays on its own, where its error shows
+        pack = self._pack_for(file)
+        if pack is None:
+            return
+        join(self.session, file, pack)
+        self.stats.joined += 1
+        log_file_fields(joined_pack=pack.id)
 
     # -- hash join -----------------------------------------------------------
 
@@ -490,8 +583,9 @@ class Scanner:
     def _join_duplicates(self, file: File) -> None:
         """Make every present copy of this content a duplicate of one winner.
 
-        A library copy wins over a staging copy; among equals the earliest row
-        wins. An LLM decision (`keep`, `superseded`, `discard`) is never overwritten.
+        A pack member wins, then a library copy over a staging copy; among equals the
+        earliest row wins. An LLM decision (`keep`, `superseded`, `discard`) and pack
+        membership are never overwritten.
         """
         rows = self.session.exec(
             select(File)
@@ -502,9 +596,10 @@ class Scanner:
         if len(rows) < 2:
             return
 
-        def rank(row: File) -> tuple[int, int]:
+        def rank(row: File) -> tuple[int, int, int]:
             in_library = row.root_id == self.library_root_id
-            return (0 if in_library else 1, row.id or 0)
+            # A pack member is never demoted, so it wins: loose copies point at it.
+            return (0 if row.pack_id else 1, 0 if in_library else 1, row.id or 0)
 
         winner = min(rows, key=rank)
         if winner.disposition is Disposition.duplicate:
@@ -514,6 +609,8 @@ class Scanner:
         for row in rows:
             if row is winner:
                 continue
+            if row.pack_id is not None:
+                continue  # pack membership stands like a filing decision
             if row.disposition not in (Disposition.unfiled, Disposition.duplicate):
                 continue  # an LLM decision stands
             if (
@@ -567,6 +664,8 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         f"seen {s.seen}, skipped {s.skipped}, processed {s.processed}, "
         f"moved {s.moved}, duplicates {s.duplicates}, missing {s.missing}, "
         f"errors {s.errored}"
+        + (f", joined a pack {s.joined}" if s.joined else "")
+        + (f", taken out of their pack {s.detached}" if s.detached else "")
     )
     for path in s.unreachable_roots:
         print(f"warning: root {path} is unreachable; its files were not marked missing")

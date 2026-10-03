@@ -25,6 +25,10 @@ class File(EntityBase, table=True):
     the file was first seen. `sha256`, `mime_type`, and `media_type` are nullable so
     a row can exist (and carry `error` rows) before extraction has succeeded. Its
     product link lives on its `Entry`.
+
+    A file is either an item of its own (it has a `file` entry) or a member of a pack
+    (`pack_id` is set and it has no entry), never both. A member's `disposition` is
+    ignored (kept `unfiled`): its pack's disposition applies.
     """
 
     __tablename__ = "file"
@@ -57,6 +61,14 @@ class File(EntityBase, table=True):
     # `reorganize` when the product first moves (NULL until then: worked out from
     # where the file sits) and cleared when the file is filed differently.
     subpath: str | None = Field(default=None, nullable=True)
+    # The pack this file belongs to, if any. RESTRICT: a pack row is deleted only once
+    # it has no members, so a member can never be left without an entry or a pack.
+    pack_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            ForeignKey("pack.id", ondelete="RESTRICT"), nullable=True, index=True
+        ),
+    )
     duplicate_of_id: int | None = Field(
         default=None,
         sa_column=Column(

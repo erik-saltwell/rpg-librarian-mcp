@@ -1,17 +1,20 @@
 """Entries: the identity the tools and per-item tables use, and how to reach a file's.
 
-Every file has exactly one `file` entry. Tables describing the catalog item (evidence,
-text analysis, errors, review flags) are keyed by `entry_id`; tables describing the
-file's bytes (`file_text`, `file_metadata`, the media tables, `isbn_result`) keep
-`file_id`. The two ids are different numbers in general, so code that looks a row up
-must use the key its table is declared with: `row_key` decides that in one place.
+A file is either an item of its own, with exactly one `file` entry, or a member of a
+pack (`file.pack_id` set), with no entry: the pack's `pack` entry stands for all its
+members.
+Tables describing the catalog item (evidence, text analysis, errors, review flags) are
+keyed by `entry_id`; tables describing the file's bytes (`file_text`, `file_metadata`,
+the media tables, `isbn_result`) keep `file_id`. The two ids are different numbers in
+general, so code that looks a row up must use the key its table is declared with:
+`row_key` decides that in one place.
 """
 
 from __future__ import annotations
 
 from sqlmodel import Session, col, select
 
-from .model import Entry, EntryMetadataBase, EntryType, File
+from .model import Entry, EntryMetadataBase, EntryType, File, Pack
 
 
 def keyed_by_entry(table: type) -> bool:
@@ -25,10 +28,23 @@ def row_key(table: type, *, file_id: int, entry_id: int) -> int:
 
 
 def file_entry(session: Session, file_id: int) -> Entry:
-    """The entry of a file. Every file has one; a missing one is a catalog error."""
-    entry = session.exec(select(Entry).where(col(Entry.file_id) == file_id)).first()
+    """The entry of a file that is not in a pack; a missing one is a catalog error."""
+    entry = optional_file_entry(session, file_id)
     if entry is None:
         raise LookupError(f"File {file_id} has no entry.")
+    return entry
+
+
+def optional_file_entry(session: Session, file_id: int) -> Entry | None:
+    """The file's own entry, or None for a pack member (members have none)."""
+    return session.exec(select(Entry).where(col(Entry.file_id) == file_id)).first()
+
+
+def pack_entry(session: Session, pack_id: int) -> Entry:
+    """The entry of a pack. Every pack has one; a missing one is a catalog error."""
+    entry = session.exec(select(Entry).where(col(Entry.pack_id) == pack_id)).first()
+    if entry is None:
+        raise LookupError(f"Pack {pack_id} has no entry.")
     return entry
 
 
@@ -47,6 +63,20 @@ def ensure_file_entry(session: Session, file: File) -> Entry:
         session.add(entry)
         session.flush()
     return entry
+
+
+def entries_with_packs(
+    session: Session, entry_ids: list[int]
+) -> dict[int, tuple[Entry, Pack | None]]:
+    """Each found entry with its pack (None for an entry that is not a pack)."""
+    if not entry_ids:
+        return {}
+    rows = session.exec(
+        select(Entry, Pack)
+        .join(Pack, col(Pack.id) == col(Entry.pack_id), isouter=True)
+        .where(col(Entry.id).in_(entry_ids))
+    ).all()
+    return {entry.id: (entry, pack) for entry, pack in rows if entry.id is not None}
 
 
 def entries_with_files(

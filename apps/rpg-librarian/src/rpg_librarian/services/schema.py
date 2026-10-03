@@ -36,13 +36,29 @@ _DISALLOWED_LEADING_WORDS = frozenset(
 _TABLE_NOTES = {
     "root": "A registered location: the library, or a staging dump folder.",
     "entry": (
-        "A catalog item: the id the tools take. Today every entry is a file "
-        "(type 'file', file_id set). Its product lives here (product_id)."
+        "A catalog item: the id the tools take. Either a file (type 'file', file_id "
+        "set) or a pack (type 'pack', pack_id set). Its product lives here "
+        "(product_id)."
     ),
     "file": (
-        "One physical file occurrence, with its disposition. Join to entry on "
-        "entry.file_id = file.id for its entry id and product."
+        "One physical file occurrence. A loose file has its own entry (join "
+        "entry.file_id = file.id) and its own disposition. A pack member has "
+        "pack_id set and NO entry: join pack and entry (entry.pack_id = "
+        "file.pack_id) for its pack's entry id, disposition, and product; its own "
+        "disposition column is ignored (kept 'unfiled')."
     ),
+    "pack": (
+        "A set of files with one collective identity (a map pack, token set, audio "
+        "set), filed as a whole. Holds the disposition; its entry (entry.pack_id) "
+        "holds the product. original_root_path is the folder it was formed from; "
+        "members move with reorganize. formation: 'find-packs' or 'create-pack'."
+    ),
+    "folder_judgment": (
+        "What find-packs concluded about a folder (outcome: pack, container, "
+        "no_packs, mixed, invalid, error), with its reason and details. mixed and "
+        "invalid folders were left as loose files and need a person or create-pack."
+    ),
+    "folder_search": "find-packs's cached Google searches for folder names.",
     "product_type": "A top-level function folder: games, maps, ...",
     "product_line": "A game, model line, or publisher within one type.",
     "product_line_alias": "An alternate name for a line.",
@@ -64,7 +80,10 @@ _TABLE_NOTES = {
     "dtrpg_result": "DriveThruRPG search hits (evidence; keyed by entry_id).",
     "rpggeek_result": "RPGGeek search candidates (evidence; keyed by entry_id).",
     "google_search_result": "Top Google hits (evidence; keyed by entry_id).",
-    "error": "A failed stage for an entry; cleared when it later succeeds.",
+    "error": (
+        "A failed stage for an entry; cleared when it later succeeds. A pack's "
+        "reorganize error summarizes all its members' failures."
+    ),
     "review_flag": (
         "A deferral: the LLM could not place the entry. Open while resolved_at is null."
     ),
@@ -86,17 +105,41 @@ _EXAMPLE_QUERIES = [
         "name": "open_review_flags",
         "description": "Entries the LLM deferred and has not yet resolved.",
         "sql": (
-            "SELECT r.entry_id, f.relative_path, r.reason FROM review_flag r "
-            "JOIN entry e ON e.id = r.entry_id JOIN file f ON f.id = e.file_id "
+            "SELECT r.entry_id, e.type, COALESCE(f.relative_path, "
+            "p.original_root_path) AS path, r.reason FROM review_flag r "
+            "JOIN entry e ON e.id = r.entry_id "
+            "LEFT JOIN file f ON f.id = e.file_id "
+            "LEFT JOIN pack p ON p.id = e.pack_id "
             "WHERE r.resolved_at IS NULL"
+        ),
+    },
+    {
+        "name": "unfiled_packs",
+        "description": "Packs not yet filed, with their folder and member count.",
+        "sql": (
+            "SELECT e.id AS entry_id, p.original_root_path, "
+            "(SELECT count(*) FROM file f WHERE f.pack_id = p.id) AS members "
+            "FROM pack p JOIN entry e ON e.pack_id = p.id "
+            "WHERE p.disposition = 'unfiled'"
+        ),
+    },
+    {
+        "name": "folders_find_packs_left_alone",
+        "description": "Folders find-packs saw as packs but did not form.",
+        "sql": (
+            "SELECT j.root_id, j.folder, j.outcome, j.reason, j.details "
+            "FROM folder_judgment j WHERE j.outcome IN ('mixed', 'invalid', 'error')"
         ),
     },
     {
         "name": "files_with_errors",
         "description": "Entries whose last attempt at some stage failed.",
         "sql": (
-            "SELECT x.entry_id, f.relative_path, x.stage, x.error_text FROM error x "
-            "JOIN entry e ON e.id = x.entry_id JOIN file f ON f.id = e.file_id"
+            "SELECT x.entry_id, e.type, COALESCE(f.relative_path, "
+            "p.original_root_path) AS path, x.stage, x.error_text FROM error x "
+            "JOIN entry e ON e.id = x.entry_id "
+            "LEFT JOIN file f ON f.id = e.file_id "
+            "LEFT JOIN pack p ON p.id = e.pack_id"
         ),
     },
 ]

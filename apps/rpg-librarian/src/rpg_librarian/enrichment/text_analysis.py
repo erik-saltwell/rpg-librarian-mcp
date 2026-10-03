@@ -14,9 +14,18 @@ DEFAULT_MODEL = "gpt-5.6-luna"
 AGNOSTIC = "Agnostic"
 UNKNOWN = "unknown"
 
+# The file wording is the original prompt's, unchanged.
+_SUBJECTS = {
+    False: "an RPG (tabletop role-playing game)\nfile",
+    True: (
+        "the documents of an RPG (tabletop role-playing game) pack (a set of files\n"
+        "released together, such as a map pack, token set, or audio pack; the keys\n"
+        "name the file and page)"
+    ),
+}
+
 _PROMPT = """\
-You are analyzing sampled page text from an RPG (tabletop role-playing game)
-file to answer two questions about it.
+You are analyzing sampled page text from {subject} to answer two questions about it.
 
 Sampled page text (JSON, keyed by page number):
 {sample_text}
@@ -38,7 +47,7 @@ class Judgment(BaseModel):
     possible_system: str | None
 
 
-def judge(sample_pages: dict[str, str]) -> Judgment:
+def judge(sample_pages: dict[str, str], *, pack: bool = False) -> Judgment:
     """Ask the configured model for a description and a guess at the system.
 
     Provider credentials stay in `.env` and are read by litellm from its own
@@ -47,6 +56,7 @@ def judge(sample_pages: dict[str, str]) -> Judgment:
     import litellm  # heavy import; only paid when this source actually runs
 
     prompt = _PROMPT.format(
+        subject=_SUBJECTS[pack],
         sample_text=json.dumps({"pages": sample_pages}),
         agnostic=AGNOSTIC,
         unknown=UNKNOWN,
@@ -87,7 +97,7 @@ class TextAnalysisSource:
         pages = context.sample_pages or {}
         if not any(text.strip() for text in pages.values()):
             return FileTextAnalysis(description=None, possible_system=None)
-        judgment = judge(pages)
+        judgment = judge(pages, pack=context.pack is not None)
         return FileTextAnalysis(
             description=judgment.description, possible_system=judgment.possible_system
         )

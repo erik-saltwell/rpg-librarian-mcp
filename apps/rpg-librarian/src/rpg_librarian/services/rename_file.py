@@ -39,7 +39,8 @@ def rename_file(session: Session, entry_id: int, new_name: str) -> dict[str, Any
     entry, file = found
     if entry.type is not EntryType.file or file is None:
         raise UsageError(
-            f"Entry {entry_id} is a {entry.type.value} entry; only files can be renamed"
+            f"Entry {entry_id} is a {entry.type.value} entry; only files can be "
+            "renamed (a pack's members are moved with the pack by reorganize)"
         )
     file_id = file.id
     root = session.get(Root, file.root_id)

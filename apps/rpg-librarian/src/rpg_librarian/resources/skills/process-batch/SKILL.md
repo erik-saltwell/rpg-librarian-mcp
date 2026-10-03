@@ -1,12 +1,16 @@
 ---
 name: process-batch
-description: File or review unfiled files in the rpg-librarian catalog, one folder at a time, using the rpg-librarian MCP tools. Use when the user asks to process the batch or inbox, review needs-review or deferred items, mark junk for removal, or runs /process-batch. This is only the judgment step; scan, enrich, and reorganize are run by the user on the command line.
+description: File or review unfiled files and packs in the rpg-librarian catalog, one folder at a time, using the rpg-librarian MCP tools. Use when the user asks to process the batch or inbox, review needs-review or deferred items, mark junk for removal, or runs /process-batch. This is only the judgment step; scan, find-packs, enrich, and reorganize are run by the user on the command line.
 ---
 
 # Process a batch
 
-File the catalog's unfiled files into products by recording product type, product line,
-and product with the `rpg-librarian` tools. Every tool takes and returns entry IDs (`entry_id`); today each entry is one file.
+File the catalog's unfiled files and packs into products by recording product type,
+product line, and product with the `rpg-librarian` tools. Every tool takes and returns
+entry IDs (`entry_id`). An entry is a file or a **pack**: a set of files with one
+collective identity (a map pack, token set, audio or STL set) whose files have no
+identity of their own. A pack is filed as a whole; its member files never appear on
+their own.
 Make the judgment calls; deterministic work
 (scanning, looking things up, moving files) has already been done, or is done afterwards
 by the user.
@@ -34,9 +38,10 @@ cannot be identified, defer it with a review flag rather than guessing.
 2. In review mode, skip the remaining steps in this section and begin at **Review
    mode**. Otherwise, read `list_unfiled` within the requested scope, carrying `root_id`
    and folder boundaries through subsequent calls. For a folder scope, use
-   `recursive=true` to check its whole subtree. If there are no unflagged files,
-   perform the final backlog check below before stopping. Suggest `scan` and `enrich`
-   only if the scope has no unfiled files at all.
+   `recursive=true` to check its whole subtree. If there are no unflagged files or
+   packs, perform the final backlog check below before stopping. Suggest `scan`,
+   `find-packs`, and `enrich` (in that order) only if the scope has nothing unfiled at
+   all.
 3. Open `report_entry` on one or two entries. If they have no text-analysis hint and every
    evidence block is empty, `enrich` probably has not run: say so, and continue only
    with the user's approval.
@@ -46,7 +51,8 @@ cannot be identified, defer it with a review flag rather than guessing.
 1. Learn the vocabulary: `list_product_types`, then `list_product_lines`.
 2. Read the scoped worklist with `list_unfiled` and pick a folder.
 3. Call `list_unfiled` with that folder (use `recursive` when one product spans
-   subfolders) to see its files with their hints. Use `report_entry` for anything unclear.
+   subfolders) to see its files and packs with their hints. Use `report_entry` for
+   anything unclear. A pack is listed in the folder that is its root.
    Check `truncated` and returned counts on every listing. The default limit is 100;
    increase it or inspect subfolders separately before deciding product boundaries.
 4. Search `list_product_lines` for the intended line. For an existing line, call
@@ -59,13 +65,47 @@ cannot be identified, defer it with a review flag rather than guessing.
 6. Refresh the scoped worklist after successful writes. Repeat until no unflagged
    files remain, then perform the final backlog check below.
 
+## Packs
+
+- File a pack with one `update_product` call on its entry ID: its disposition and
+  product apply to every member. `report_entry` on a pack gives a short summary (folder,
+  member counts by media type, subfolders, sample names, evidence, text-analysis hint);
+  `report-pack` lists every member when the boundary needs checking.
+- A pack is usually the product itself. A product holds at most one *kept* pack: if
+  two packs are one release (Vol 1 and Vol 2 downloaded separately), merge them with
+  `add-to-pack` (pass the other pack's folder) instead of keeping both. A superseded
+  earlier version may share the product.
+- Correct a boundary by path, as `list_unfiled` and `report-pack` show it:
+  `add-to-pack` adds a file or a folder's files (moving them from another pack if
+  needed); `remove-from-pack` takes them out, and each comes back as an unfiled file
+  with its own entry ID. A pack left with no members is deleted.
+- If a folder is clearly one release of assets but its files are listed one by one, make
+  it a pack with `create-pack`. If its files are already filed differently, pass the
+  pack's decision; the decisions the files give up are listed in the result.
+- A pack's evidence comes from its folder names and its short documents (license,
+  readme), never from its file names. A pack with no search results can still be filed
+  from its folder name.
+
 ## Review mode
 
-1. Find open review flags with `query`, joining `review_flag` to `entry` (on
-   `entry_id`) and `entry` to `file` (on `entry.file_id`), and selecting the entry ID,
-   root ID, relative path, flag reason, and creation time where
-   `resolved_at IS NULL` and `missing_since IS NULL`. Apply any folder or root scope
-   the user supplied. Do not mix unflagged files into a review-only request.
+1. Find open review flags with `query`:
+
+   ```sql
+   SELECT rf.entry_id, en.type, COALESCE(f.root_id, p.root_id) AS root_id,
+     COALESCE(f.relative_path, p.original_root_path) AS relative_path,
+     rf.reason, rf.created_at
+   FROM review_flag rf
+   JOIN entry en ON en.id = rf.entry_id
+   LEFT JOIN file f ON f.id = en.file_id
+   LEFT JOIN pack p ON p.id = en.pack_id
+   WHERE rf.resolved_at IS NULL
+     AND (f.id IS NULL OR f.missing_since IS NULL)
+   ORDER BY rf.entry_id
+   ```
+
+   For a pack, `relative_path` is the folder it was formed from; `report_entry` shows
+   where it is now. Apply any folder or root scope the user supplied. Do not mix
+   unflagged items into a review-only request.
 2. Call `report_entry` for each item being reviewed so the original reason and current
    evidence are visible before changing it.
 3. Follow the user's judgment:
@@ -85,8 +125,10 @@ cannot be identified, defer it with a review flag rather than guessing.
 
 - A product is a set of files that shipped together. The folder path is usually the
   best clue. Search results, ISBN records, and system guesses are hints, not verdicts.
-- Google hits on a map, token, image, audio, or other non-PDF file come from a search
-  for its pack folder, not for the file: they may identify the pack, never the file.
+- Evidence on a pack (DriveThruRPG, RPGGeek, Google) comes from searches for its folder
+  names and its documents' titles: it may identify the pack, never a single member.
+  Google hits on a loose map, token, image, audio, or other non-PDF file come from a
+  search for its folder, not for the file.
 - Treat one standalone PDF (a core rulebook or adventure) as its own product.
 - Treat standalone map packs, music, sound effects, miniatures, and terrain as their
   own product under a functional type, not under a game.
@@ -102,7 +144,8 @@ cannot be identified, defer it with a review flag rather than guessing.
 
 ## Rules
 
-- Change the catalog only through `update_product`. Never run `reorganize`, `scan`, or
+- Change the catalog only through `update_product` and the pack tools (`create-pack`,
+  `add-to-pack`, `remove-from-pack`). Never run `reorganize`, `scan`, `find-packs`, or
   `enrich`, and do not try to read or move files. Nothing moves until the user runs
   `reorganize`.
 - Do not query `file_text.sample_pages`.
@@ -116,6 +159,7 @@ scope, include its subtree with `recursive=true`. Handle truncation and use
 `report_entry` for flag reasons. Distinguish newly deferred files from the previous
 backlog and report remaining unflagged files separately.
 
-Print a concise summary of filed products, created lines/types/aliases, files marked
-`superseded` or `discard` with their reasons, deferred files, and remaining unflagged
-files. Tell the user to review it, then run `rpg-librarian reorganize --dry-run`.
+Print a concise summary of filed products (saying which were packs), created
+lines/types/aliases, pack corrections (created, merged, files removed), items marked
+`superseded` or `discard` with their reasons, deferred items, and remaining unflagged
+items. Tell the user to review it, then run `rpg-librarian reorganize --dry-run`.

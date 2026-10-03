@@ -8,12 +8,13 @@ ever stored.
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import PurePosixPath
 
 from sqlalchemy import func
 from sqlmodel import Session, col, select
 
-from .model import Disposition, Entry, File
+from .model import Disposition, Entry, File, Pack
 
 # Characters SMB/Windows reject in a path component, plus control characters.
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -24,6 +25,43 @@ _RESERVED = frozenset(
 )
 _MAX_COMPONENT_LENGTH = 200  # well under the 255 SMB limit, leaving room for suffixes
 TRASH_DIRNAME = ".trash"
+
+
+def sanitize_filename(name: str, *, number: int | None = None) -> str:
+    """Apply the library policy, preserving the extension and optional suffix.
+
+    Unicode combining marks belonging to accented letters are retained too.
+    The limit applies to UTF-8 bytes as well as UTF-16 units for portable components.
+    """
+    allowed = " -_.&$#@%^()[]"
+    cleaned = (
+        "".join(
+            c if c in allowed or unicodedata.category(c)[0] in "LNM" else "-"
+            for c in name
+        )
+        .strip()
+        .rstrip(". ")
+    )
+    cleaned = cleaned or "_"
+    stem, dot, ext = cleaned.rpartition(".")
+    if not stem or not dot:
+        stem, extension = cleaned, ""
+    else:
+        extension = dot + ext
+    devices = _RESERVED | {f"{p}{n}" for p in ("COM", "LPT") for n in "¹²³"}
+    if stem.split(".")[0].rstrip(" ").upper() in devices:
+        stem = "_" + stem
+    suffix = f" ({number})" if number is not None else ""
+    if len(extension.encode("utf-8")) > 100:
+        raise ValueError("Filename extension exceeds the portable length limit")
+    while (
+        len((stem + suffix + extension).encode("utf-8")) > _MAX_COMPONENT_LENGTH
+        or len((stem + suffix + extension).encode("utf-16-le")) // 2
+        > _MAX_COMPONENT_LENGTH
+    ):
+        stem = stem[:-1]
+    return (stem.rstrip(". ") or "_") + suffix + extension
+
 
 # Where each non-kept disposition is routed, under `<library>/.trash/`.
 TRASH_BUCKETS: dict[Disposition, str] = {
@@ -62,16 +100,25 @@ def kept_file_count(session: Session, product_id: int) -> int:
     """How many files occupy a product's folder.
 
     Only `keep` files of that product count, so superseding one of two kept files
-    drops the product to one and the survivor moves up into the line folder.
+    drops the product to one and the survivor moves up into the line folder. The
+    members of a kept pack of that product count too.
     """
-    statement = (
+    loose = (
         select(func.count())
         .select_from(File)
         .join(Entry, col(Entry.file_id) == col(File.id))
         .where(col(Entry.product_id) == product_id)
         .where(col(File.disposition) == Disposition.keep)
     )
-    return session.exec(statement).one()
+    members = (
+        select(func.count())
+        .select_from(File)
+        .join(Pack, col(Pack.id) == col(File.pack_id))
+        .join(Entry, col(Entry.pack_id) == col(Pack.id))
+        .where(col(Entry.product_id) == product_id)
+        .where(col(Pack.disposition) == Disposition.keep)
+    )
+    return session.exec(loose).one() + session.exec(members).one()
 
 
 def clean_subpath(path: PurePosixPath) -> PurePosixPath:
@@ -79,13 +126,15 @@ def clean_subpath(path: PurePosixPath) -> PurePosixPath:
 
     Empty, `.`, `..`, and root components are dropped so the result can never climb
     out of the product folder. Folder names are sanitized like every other folder;
-    the filename is kept as it is, as it always has been.
+    the filename follows the library's filename policy.
     """
     parts = [p for p in path.parts if p not in {"", ".", "..", "/"}]
     if not parts:
         raise ValueError(f"no filename in {str(path)!r}")
     *folders, filename = parts
-    return PurePosixPath(*(sanitize_name(f) for f in folders), filename)
+    return PurePosixPath(
+        *(sanitize_name(f) for f in folders), sanitize_filename(filename)
+    )
 
 
 def target_relative_path(
@@ -106,7 +155,7 @@ def target_relative_path(
     """
     parts = [sanitize_name(type_name), sanitize_name(line_name)]
     if kept_count <= 1:
-        return PurePosixPath(*parts, subpath.name)
+        return PurePosixPath(*parts, sanitize_filename(subpath.name))
     return PurePosixPath(*parts, sanitize_name(product_name)) / clean_subpath(subpath)
 
 
@@ -135,6 +184,10 @@ def desired_trash_path(
     """
     parts = PurePosixPath(relative_path).parts
     if trash_bucket_of(root_is_library, relative_path) is not None:
-        return PurePosixPath(TRASH_DIRNAME, bucket, *parts[2:])
+        return PurePosixPath(
+            TRASH_DIRNAME, bucket, *parts[2:-1], sanitize_filename(parts[-1])
+        )
     origin = f"{root_id}-{sanitize_name(PurePosixPath(root_path).name)}"
-    return PurePosixPath(TRASH_DIRNAME, bucket, origin, *parts)
+    return PurePosixPath(
+        TRASH_DIRNAME, bucket, origin, *parts[:-1], sanitize_filename(parts[-1])
+    )

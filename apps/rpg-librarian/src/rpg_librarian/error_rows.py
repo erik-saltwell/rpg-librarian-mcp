@@ -1,7 +1,9 @@
 """Per-entry, per-stage failure rows: overwritten on retry, cleared on success.
 
-Keyed by entry, including failures of file-level stages (`scan`, `reorganize`): every
-file has an entry, and `entries.file_entry_id` finds it.
+Keyed by entry, including failures of file-level stages (`scan`, `reorganize`). A file
+in a pack has no entry: `scan` takes a failing member out of its pack first (see
+`membership.own_entry`), and `reorganize` summarizes members' failures on the pack's
+entry.
 """
 
 from __future__ import annotations

@@ -7,9 +7,10 @@ second run with nothing changed moves nothing, and an interrupted run is simply 
 
 Safety rules, in order:
 
-- Nothing is ever overwritten. A destination that already exists, or that two files both
-  want, blocks the files involved: each gets an `error` row saying why, and nothing is
-  renamed to make room.
+- Nothing is ever overwritten. Placement adds stable numbered filename suffixes for
+  case-insensitive collisions, preserving existing names. A destination occupied after
+  planning blocks the move. A pack's members share their pack's entry, so failures are
+  summarized in one `error` row on the pack (the output still lists every file).
 - Before moving, the file at the recorded path must still have the size and modified
   time `scan` recorded. If not, it changed since the catalog last saw it: it is flagged,
   not moved.
@@ -27,10 +28,9 @@ from __future__ import annotations
 
 import argparse
 import errno
-import os
 import shutil
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
@@ -51,9 +51,11 @@ from ..observability import (
 )
 from ..paths import TRASH_DIRNAME
 from ..progress import track
+from ..services.file_moves import rename_no_replace
 from ..services.placement import Placement, compute_placements
 
 _PARTIAL_SUFFIX = ".rpg-librarian-partial"
+_SHOWN_MEMBER_FAILURES = 3
 
 
 @dataclass
@@ -69,7 +71,35 @@ class Stats:
     unreachable: int = 0  # in a root that is offline
     dirs_removed: int = 0
     dry_run: bool = False
-    blocked_reasons: dict[int, str] = field(default_factory=dict)  # by entry id
+    # By file id: (the entry id reports name, the reason). Members share their pack's.
+    blocked_reasons: dict[int, tuple[int, str]] = field(default_factory=dict)
+
+
+@dataclass
+class PackFailures:
+    """Why members of each pack could not move, by the pack's entry id.
+
+    The `error` table holds one row per entry and stage, so a pack's member failures
+    are collected during the run and written as one summary row per pack at the end.
+    """
+
+    reasons: dict[int, list[str]] = field(default_factory=dict)
+
+    def add(self, placement: Placement, reason: str) -> None:
+        line = f"{placement.relative_path}: {reason}"
+        self.reasons.setdefault(placement.entry_id, []).append(line)
+
+    def record(self, session: Session) -> None:
+        for entry_id, lines in sorted(self.reasons.items()):
+            shown = "; ".join(lines[:_SHOWN_MEMBER_FAILURES])
+            more = len(lines) - _SHOWN_MEMBER_FAILURES
+            summary = (
+                f"{len(lines)} member file(s) of this pack could not be moved: {shown}"
+                + (f"; and {more} more" if more > 0 else "")
+            )
+            record_error(
+                session, entry_id, ProcessingStage.reorganize, RuntimeError(summary)
+            )
 
 
 @dataclass(frozen=True)
@@ -112,8 +142,9 @@ def _check(placement: Placement, library: Path, pending_sources: set[Path]) -> C
 def _collisions(placements: list[Placement]) -> dict[int, str]:
     """Files whose destination is also wanted by, or already held by, another file.
 
-    Keyed by entry id, and the reasons name entry ids: they are stored in `error` rows,
-    which the review session reads and follows up with the report tool.
+    Keyed by file id (a pack's members share one entry), and the reasons name entry
+    ids: they are stored in `error` rows, which the review session reads and follows up
+    with the report tool.
     """
     by_dest: dict[str, list[Placement]] = defaultdict(list)
     for placement in placements:
@@ -126,9 +157,9 @@ def _collisions(placements: list[Placement]) -> dict[int, str]:
             if placement.settled:
                 continue
             others = sorted(
-                o.entry_id for o in group if o.entry_id != placement.entry_id
+                {o.entry_id for o in group if o.file_id != placement.file_id}
             )
-            blocked[placement.entry_id] = (
+            blocked[placement.file_id] = (
                 f"same destination as entry(ies) {others}: {placement.dest}"
             )
     return blocked
@@ -143,11 +174,15 @@ def _copy_verified(placement: Placement, source: Path, dest: Path) -> None:
         shutil.copy2(source, partial)
         if generate_sha256(partial) != expected:
             raise OSError("the copy does not match the original (SHA-256 differs)")
-        os.replace(partial, dest)
+        rename_no_replace(partial, dest)
     except BaseException:
         partial.unlink(missing_ok=True)
         raise
-    source.unlink()
+    try:
+        source.unlink()
+    except BaseException:
+        dest.unlink()
+        raise
 
 
 def _move(placement: Placement, library: Path) -> str:
@@ -155,7 +190,7 @@ def _move(placement: Placement, library: Path) -> str:
     source, dest = _source_of(placement), library / placement.dest
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        os.rename(source, dest)
+        rename_no_replace(source, dest)
     except OSError as error:
         if error.errno != errno.EXDEV:
             raise
@@ -216,9 +251,13 @@ def _print_plan(
             print(f"  {_display(placement, labels)}  ->  {placement.dest}")
     if blocked:
         print(f"\nBLOCKED: {len(blocked)} (nothing will be moved for these)")
-        for entry_id, reason in sorted(blocked.items()):
+        for file_id, reason in sorted(
+            blocked.items(), key=lambda item: (by_id[item[0]].entry_id, item[0])
+        ):
+            placement = by_id[file_id]
             print(
-                f"  entry {entry_id}  {_display(by_id[entry_id], labels)}\n    {reason}"
+                f"  entry {placement.entry_id}  {_display(placement, labels)}\n"
+                f"    {reason}"
             )
     if unreachable:
         print("\nUNREACHABLE ROOTS (skipped, nothing recorded):")
@@ -253,7 +292,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         reachable = {rid for rid, root in roots.items() if Path(root.path).is_dir()}
 
         placements = compute_placements(session)
-        by_id = {p.entry_id: p for p in placements}
+        by_id = {p.file_id: p for p in placements}
         stats.settled = sum(1 for p in placements if p.settled)
         todo = [p for p in placements if not p.settled]
         unreachable = [p for p in todo if p.root_id not in reachable]
@@ -265,12 +304,12 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         candidates: list[Placement] = []
         pending_sources = {_source_of(p).resolve() for p in todo}
         for placement in todo:
-            if placement.entry_id in collided:
-                blocked[placement.entry_id] = collided[placement.entry_id]
+            if placement.file_id in collided:
+                blocked[placement.file_id] = collided[placement.file_id]
                 continue
             check = _check(placement, library, pending_sources)
             if check.verdict == "blocked":
-                blocked[placement.entry_id] = check.reason
+                blocked[placement.file_id] = check.reason
             else:
                 candidates.append(placement)
 
@@ -320,9 +359,10 @@ def _execute(
     # re-derived below. Clearing first means a file that has since been fixed, or moved
     # by hand and rescanned, does not keep an error it will never be visited to lose.
     session.exec(delete(Error).where(col(Error.stage) == ProcessingStage.reorganize))
-    by_id = {p.entry_id: p for p in placements}
-    for entry_id, reason in sorted(blocked.items()):
-        _record_blocked(session, by_id[entry_id], reason, stats)
+    by_id = {p.file_id: p for p in placements}
+    failures = PackFailures()
+    for file_id, reason in sorted(blocked.items()):
+        _record_blocked(session, by_id[file_id], reason, stats, failures)
     _store_subpaths(session, placements, candidates)
     session.commit()
 
@@ -349,9 +389,17 @@ def _execute(
                 progressed = True
                 attempts += 1
                 if check.verdict == "blocked":
-                    _record_blocked(session, placement, check.reason, stats)
+                    _record_blocked(session, placement, check.reason, stats, failures)
                 else:
-                    _apply(session, placement, library_root, library, emptied, stats)
+                    _apply(
+                        session,
+                        placement,
+                        library_root,
+                        library,
+                        emptied,
+                        stats,
+                        failures,
+                    )
                 session.commit()  # one file, one transaction
                 done += 1
                 progress(
@@ -366,10 +414,13 @@ def _execute(
                         placement,
                         "its destination is held by a file that cannot move",
                         stats,
+                        failures,
                     )
                 session.commit()
                 break
             remaining = deferred
+    failures.record(session)
+    session.commit()
     stats.dirs_removed = _prune_empty_dirs(emptied, boundaries)
 
 
@@ -396,20 +447,27 @@ def _store_subpaths(
 
 
 def _record_blocked(
-    session: Session, placement: Placement, reason: str, stats: Stats
+    session: Session,
+    placement: Placement,
+    reason: str,
+    stats: Stats,
+    failures: PackFailures,
 ) -> None:
     path = Path(placement.relative_path)
     with FileTracker(placement.file_id, path, action="blocked"):
-        record_error(
-            session,
-            placement.entry_id,
-            ProcessingStage.reorganize,
-            RuntimeError(reason),
-        )
+        if placement.pack_id is not None:
+            failures.add(placement, reason)
+        else:
+            record_error(
+                session,
+                placement.entry_id,
+                ProcessingStage.reorganize,
+                RuntimeError(reason),
+            )
         log_file_fields(reason=reason)
         mark_file_error(reason)
     stats.blocked += 1
-    stats.blocked_reasons[placement.entry_id] = reason
+    stats.blocked_reasons[placement.file_id] = (placement.entry_id, reason)
 
 
 def _apply(
@@ -419,6 +477,7 @@ def _apply(
     library: Path,
     emptied: set[Path],
     stats: Stats,
+    failures: PackFailures,
 ) -> None:
     source = _source_of(placement)
     action = "trashed" if placement.kind == "trash" else "moved"
@@ -438,10 +497,31 @@ def _apply(
             file.relative_path = placement.dest
             file.last_seen_at = datetime.now(UTC)
             session.add(file)
-            clear_error(session, placement.entry_id, ProcessingStage.reorganize)
+            if placement.pack_id is None:
+                clear_error(session, placement.entry_id, ProcessingStage.reorganize)
+            session.commit()
     except Exception as error:
         session.rollback()
-        record_error(session, placement.entry_id, ProcessingStage.reorganize, error)
+        destination = library / placement.dest
+        if destination.exists() and not source.exists():
+            try:
+                _move(
+                    replace(
+                        placement,
+                        root_path=str(library),
+                        relative_path=placement.dest,
+                        dest=placement.relative_path,
+                    ),
+                    Path(placement.root_path),
+                )
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    f"Catalog update failed and move rollback failed: {destination}"
+                ) from rollback_error
+        if placement.pack_id is not None:
+            failures.add(placement, f"{type(error).__name__}: {error}")
+        else:
+            record_error(session, placement.entry_id, ProcessingStage.reorganize, error)
         stats.errors += 1
         return
     emptied.add(source.parent)
@@ -468,5 +548,7 @@ def _print_summary(stats: Stats) -> None:
         print(
             f"warning: {stats.unreachable} file(s) are in an unreachable root; skipped"
         )
-    for entry_id, reason in sorted(stats.blocked_reasons.items()):
+    for _file_id, (entry_id, reason) in sorted(
+        stats.blocked_reasons.items(), key=lambda item: (item[1][0], item[0])
+    ):
         print(f"  blocked: entry {entry_id}: {reason}")

@@ -24,10 +24,22 @@ _MAX_PACK_QUERY_WORDS = 16
 
 
 @dataclass(frozen=True, slots=True)
-class FileContext:
-    """What `enrich` knows about one file, loaded from the catalog."""
+class PackFacts:
+    """What identifies a pack: its root folder's name and its parent's (the pack's
+    identity is collective), and the embedded titles of its member PDFs."""
 
-    file_id: int
+    root_folder: str
+    parent_folder: str  # "" when the pack's root sits directly in a source folder
+    member_titles: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class FileContext:
+    """What `enrich` knows about one entry, loaded from the catalog: a file, or a pack
+    (`pack` set, `file_id` None, `relative_path` its current root folder, and
+    `sample_pages` its members' pooled text)."""
+
+    file_id: int | None
     entry_id: int  # the key of entry-keyed evidence; see `entries.row_key`
     path: str  # absolute, for logging
     relative_path: str
@@ -37,6 +49,7 @@ class FileContext:
     # Physical PDF page samples or one logical plain-text sample at "1".
     # None: the file has no `file_text` row (unsupported media, or unreadable).
     sample_pages: dict[str, str] | None = None
+    pack: PackFacts | None = None
 
 
 def _words(text: str) -> str:
@@ -61,6 +74,8 @@ def is_product_document(context: FileContext) -> bool:
     not a product, so a strict catalog search cannot use it. Google looks such files
     up by their pack instead (`pack_query`).
     """
+    if context.pack is not None:
+        return False
     return context.media_type == "pdf" and not context.relative_path.lower().endswith(
         ".ai"
     )
@@ -98,6 +113,13 @@ def pack_query(context: FileContext) -> str:
         for folder in PurePosixPath(context.relative_path).parent.parts
         if not folder.startswith(".")
     ][:PACK_DEPTH]
+    return folder_words(folders)
+
+
+def folder_words(folders: list[str]) -> str:
+    """The words of some folder names, in order, without store order ids or repeated
+    words, capped at a query's length: "Heart The City Beneath", "Heart The City Beneath
+    - Map Set" give "Heart The City Beneath Map Set"."""
     words: list[str] = []
     seen: set[str] = set()
     for folder in folders:
@@ -106,6 +128,33 @@ def pack_query(context: FileContext) -> str:
                 seen.add(word.casefold())
                 words.append(word)
     return " ".join(words[:_MAX_PACK_QUERY_WORDS])
+
+
+def words_of(name: str) -> str:
+    """A folder or file name as plain words (camel case and separators split)."""
+    return _words(_STORE_ORDER_ID.sub("", name))
+
+
+def pack_ladder(pack: PackFacts) -> list[str]:
+    """Queries for a strict catalog search for a pack: its root folder's name, then its
+    parent's, then the two combined, then its member PDFs' embedded titles. File stems
+    are never used: a pack's files have no identity of their own."""
+    candidates = [words_of(pack.root_folder), words_of(pack.parent_folder)]
+    candidates.append(
+        folder_words([f for f in (pack.parent_folder, pack.root_folder) if f])
+    )
+    candidates += [_usable_title(title) for title in pack.member_titles]
+    ladder: list[str] = []
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if len(candidate) >= _MIN_QUERY_LENGTH and candidate not in ladder:
+            ladder.append(candidate)
+    return ladder
+
+
+def pack_google_query(pack: PackFacts) -> str:
+    """The Google query for a pack: its parent's and root folder's words."""
+    return folder_words([f for f in (pack.parent_folder, pack.root_folder) if f])
 
 
 def comparable_name(name: str) -> str:

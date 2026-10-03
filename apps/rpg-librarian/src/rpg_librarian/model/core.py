@@ -11,6 +11,8 @@ from rpg_librarian_tools.files import MediaType
 
 from .Disposition import Disposition
 from .EntryType import EntryType
+from .FolderOutcome import FolderOutcome
+from .PackFormation import PackFormation
 from .ProcessingStage import ProcessingStage
 from .RootKind import RootKind
 
@@ -80,6 +82,16 @@ class DispositionType(_EnumText):
 class EntryTypeType(_EnumText):
     cache_ok = True
     enum_class = EntryType
+
+
+class PackFormationType(_EnumText):
+    cache_ok = True
+    enum_class = PackFormation
+
+
+class FolderOutcomeType(_EnumText):
+    cache_ok = True
+    enum_class = FolderOutcome
 
 
 class RootKindType(_EnumText):
