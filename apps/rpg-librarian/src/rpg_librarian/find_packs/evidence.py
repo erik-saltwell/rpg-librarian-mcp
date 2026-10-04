@@ -66,7 +66,8 @@ VARIANT_WORDS = (
     {"print", "screen"},
 )
 _NUMBERED = re.compile(r"^(.*?)(\d+)$")
-_SHOWN_CHILDREN = 20
+# Subfolders described to the model; a container's others are always walked.
+SHOWN_CHILDREN = 20
 _SHOWN_FILES = 8
 _SHOWN_DOCUMENTS = 5
 
@@ -238,7 +239,7 @@ def summary(node: FolderNode, search: dict[str, Any] | None) -> dict[str, Any]:
     files = [f for f in node.all_files() if eligible(f)]
     documents = [f for f in files if is_document(f)]
     children = []
-    for name in sorted(node.children)[:_SHOWN_CHILDREN]:
+    for name in sorted(node.children)[:SHOWN_CHILDREN]:
         below = [f for f in node.children[name].all_files() if eligible(f)]
         children.append(
             {
@@ -261,7 +262,7 @@ def summary(node: FolderNode, search: dict[str, Any] | None) -> dict[str, Any]:
         "numbered_runs": numbered_runs(files),
         "variant_subfolders": variant_subfolders(node),
         "subfolders": children,
-        "more_subfolders": max(0, len(node.children) - _SHOWN_CHILDREN),
+        "more_subfolders": max(0, len(node.children) - SHOWN_CHILDREN),
         "sample_files": [
             str(PurePosixPath(f.relative_path).relative_to(node.path))
             for f in sorted(files, key=lambda f: f.relative_path)[:_SHOWN_FILES]

@@ -27,7 +27,7 @@ below, whether it is a *pack*.
   names and variant subfolders are strong signs of a pack.
 - `container`: the folder holds several distinct releases further down (a category such
   as "Maps", a publisher, a game, a bundle). List in `descend_into` the subfolder names
-  that may hold packs.
+  that may hold packs. Subfolders not shown (`more_subfolders`) are always examined.
 - `no_packs`: nothing at or below this folder is a pack (books, rules documents,
   unrelated loose files).
 

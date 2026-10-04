@@ -55,6 +55,7 @@ class SourceStats:
     with_results: int = 0
     empty: int = 0
     errors: int = 0
+    queries: int | None = None  # distinct requests, when entries share them
     skipped_reason: str | None = None
     stopped_reason: str | None = None
 
@@ -222,8 +223,16 @@ def _run_source(
     stats.eligible = len(contexts)
     if args.limit is not None:
         contexts = contexts[: args.limit]
+    # A source whose entries share queries (Google: one per pack folder) reports
+    # progress in queries, so the bar shows the requests it will actually make.
+    query_of = getattr(source, "query", None)
+    queries = [query_of(c) for c in contexts] if query_of else None
+    if queries is not None:
+        stats.queries = len(set(queries))
+    started: set[str] = set()
 
-    with track(f"enrich {source.name}", len(contexts)) as progress:
+    total = stats.queries if stats.queries is not None else len(contexts)
+    with track(f"enrich {source.name}", total) as progress:
         for index, context in enumerate(contexts, start=1):
             stats.attempted += 1
             try:
@@ -253,7 +262,10 @@ def _run_source(
                     else:
                         stats.empty += 1
             session.commit()  # one file, one transaction
-            progress(index, context.relative_path, stats.errors)
+            if queries is not None:
+                started.add(queries[index - 1])
+            done = len(started) if queries is not None else index
+            progress(done, context.relative_path, stats.errors)
     return stats
 
 
@@ -276,6 +288,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         print(
             f"{name}: {stats.attempted} attempted, {stats.with_results} with results, "
             f"{stats.empty} empty, {stats.errors} errors"
+            + (f", {stats.queries} queries" if stats.queries is not None else "")
             + (f", {stats.removed} stale removed" if stats.removed else "")
         )
         if stats.stopped_reason:

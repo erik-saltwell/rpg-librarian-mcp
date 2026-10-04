@@ -96,6 +96,22 @@ are in [plan.md](plan.md):
 **Next.** [pack-migration](../pack-migration/item.md): migrate and adopt the live
 catalog's filed products as packs.
 
+**Fix after first live use (2026-10-03, uncommitted).** The first live `find-packs` run
+on the inbox judged only 21 folders. It formed 20 packs and left about 51.5k files loose
+under `Syrinscape/`, which has 233 subfolders. A folder summary shows the model only the
+first 20 subfolders (`SHOWN_CHILDREN`), and the walk descended only into the names in
+`descend_into`. `Finder._children` now descends into the named subfolders plus every
+subfolder the model was not shown. This also applies when a stored container judgment
+is reused. The prompt says that unshown subfolders are always examined.
+
+Verified on a backup-API copy of live (`~/data/rpg_test_work/syrinscape-fix/copy.db`):
+- A `--dry-run --no-search --limit 1` run reused the stored `Syrinscape` judgment and
+  walked all 232 remaining subfolders: 10 asked and 222 deferred.
+- A real `--limit 1` run formed 20 packs over files that already had Google rows and
+  text analyses. It deleted exactly those 1,590 member entries' rows, with no
+  foreign-key violations and no orphaned rows.
+- ruff and ty pass.
+
 ## Earlier resume note
 
 The workshop ([idea.md](idea.md)) and a flesh-out session on 2026-10-02 are done, and the result is saved in [intent.md](intent.md). Packs are a second entry type, found by a new `find-packs` command (folder evidence, a media-dominance gate, a cached folder-name search, and a top-down LLM classification). A pack owns its product and disposition, a product has at most one kept pack, and a pack is never re-judged once it exists. Nothing is built. This reverses the entry-table choice to keep `disposition` file-only. Live catalog migration is tracked in [pack-migration](../pack-migration/item.md).

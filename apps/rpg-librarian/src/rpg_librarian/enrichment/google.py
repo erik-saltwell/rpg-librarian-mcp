@@ -53,13 +53,16 @@ class GoogleSource:
             return bool(pack_google_query(context.pack))
         return is_product_document(context) or bool(pack_query(context))
 
-    def fetch(self, context: FileContext) -> GoogleSearchResult | None:
+    def query(self, context: FileContext) -> str:
+        """The query for this entry; entries with the same query share one request."""
         if context.pack is not None:
-            query = pack_google_query(context.pack)
-        elif is_product_document(context):
-            query = google_query(context)
-        else:
-            query = pack_query(context)
+            return pack_google_query(context.pack)
+        if is_product_document(context):
+            return google_query(context)
+        return pack_query(context)
+
+    def fetch(self, context: FileContext) -> GoogleSearchResult | None:
+        query = self.query(context)
         if query not in self._outcomes:
             try:
                 self._outcomes[query] = self._search(query)

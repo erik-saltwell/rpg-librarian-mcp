@@ -41,6 +41,7 @@ from ..enrichment.base import FatalSourceError
 from ..enrichment.google import serper_available, serper_search
 from ..errors import UsageError
 from ..find_packs.evidence import (
+    SHOWN_CHILDREN,
     FolderNode,
     build_trees,
     eligible,
@@ -160,8 +161,14 @@ class Finder:
     def _children(
         self, node: FolderNode, names: list[str] | None = None
     ) -> list[FolderNode]:
-        wanted = names if names else sorted(node.children)
-        return [node.children[n] for n in wanted if n in node.children]
+        """The children to walk: all of them, or the named ones plus every one the
+        model was not shown (a summary lists only the first `SHOWN_CHILDREN`), so a
+        container with hundreds of releases is walked in full."""
+        everything = sorted(node.children)
+        if not names:
+            return [node.children[n] for n in everything]
+        unshown = [n for n in everything[SHOWN_CHILDREN:] if n not in names]
+        return [node.children[n] for n in [*names, *unshown] if n in node.children]
 
     def _visit(self, node: FolderNode) -> str | list[FolderNode] | None:
         """ "ask", children to descend into, or None (nothing to do here)."""
