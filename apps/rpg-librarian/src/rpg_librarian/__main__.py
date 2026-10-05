@@ -182,7 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show what would move, and change nothing.",
     )
-    ro.add_argument("--limit", type=int, help="Move at most this many files this run.")
+    ro.add_argument(
+        "--limit",
+        type=int,
+        help="Move at most this many files; skip the sweep of empty staging folders.",
+    )
     cleanup = verbs["sanitize-filenames"]
     mode = cleanup.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true", help="Back up and apply cleanup.")

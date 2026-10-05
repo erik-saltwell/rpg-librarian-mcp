@@ -16,9 +16,10 @@ Safety rules, in order:
   not moved.
 - Same-volume moves are a rename. Across volumes (a dump on one share, the library on
   another) the file is copied, verified by SHA-256, and only then is the source removed.
-- The only thing ever deleted is a source that was just copied and verified, and folders
-  left empty by the moves. Nothing is deleted automatically otherwise: trash is emptied
-  by hand.
+- The only things deleted are sources just copied and verified, folders left empty by
+  moves, and pre-existing empty folders under staging roots on unlimited real runs.
+  Roots, hidden directory subtrees (including trash), and directory symlinks are
+  preserved during cleanup. Trash is emptied by hand.
 
 `reorganize` writes only bookkeeping (the file's root, path, and `last_seen_at`), never
 product assignments.
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import os
 import shutil
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
@@ -203,6 +205,16 @@ def _prune_empty_dirs(dirs: set[Path], boundaries: set[Path]) -> int:
     """Remove folders the moves left empty, climbing toward (never past) their root."""
     removed = 0
     for start in sorted(dirs, key=lambda d: len(d.parts), reverse=True):
+        root = next((b for b in boundaries if start.is_relative_to(b)), None)
+        if root is None:
+            continue
+        # Protect the entire subtree, not just the hidden directory itself.
+        relative = start.relative_to(root)
+        if root.is_symlink() or any(
+            part.startswith(".") or (root.joinpath(*relative.parts[:i])).is_symlink()
+            for i, part in enumerate(relative.parts, start=1)
+        ):
+            continue
         current = start
         while current not in boundaries and current.name != TRASH_DIRNAME:
             if not any(current.is_relative_to(b) for b in boundaries):
@@ -213,6 +225,35 @@ def _prune_empty_dirs(dirs: set[Path], boundaries: set[Path]) -> int:
                 break  # not empty, or gone: stop climbing
             removed += 1
             current = current.parent
+    return removed
+
+
+def _sweep_empty_dirs(roots: set[Path]) -> int:
+    """Remove empty staging folders, preserving roots and hidden/symlink subtrees."""
+    removed = 0
+    for root in sorted(roots):
+        if root.is_symlink():
+            continue
+        directories: list[Path] = []
+        # Prune before descending so even children of protected folders stay intact.
+        # Reversing this parent-first walk then lets children be removed first.
+        for dirpath, dirnames, _filenames in os.walk(root, followlinks=False):
+            path = Path(dirpath)
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if name != TRASH_DIRNAME
+                and not name.startswith(".")
+                and not (path / name).is_symlink()
+            ]
+            if path != root:
+                directories.append(path)
+        for path in reversed(directories):
+            try:
+                path.rmdir()
+            except OSError:
+                continue  # nonempty, inaccessible, or already gone
+            removed += 1
     return removed
 
 
@@ -422,6 +463,11 @@ def _execute(
     failures.record(session)
     session.commit()
     stats.dirs_removed = _prune_empty_dirs(emptied, boundaries)
+    if args.limit is None:
+        staging_roots = {
+            Path(root.path) for root in roots.values() if root.kind is RootKind.staging
+        }
+        stats.dirs_removed += _sweep_empty_dirs(staging_roots)
 
 
 def _store_subpaths(
