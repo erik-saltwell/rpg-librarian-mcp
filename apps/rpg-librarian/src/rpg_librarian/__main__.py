@@ -7,9 +7,11 @@ from pathlib import Path
 
 from .commands import (
     add_source,
+    clean,
     enrich,
     find_packs,
     init,
+    quick_dedupe,
     reorganize,
     sanitize_filenames,
     scan,
@@ -28,6 +30,8 @@ _VERBS = {
     "init": "Create the catalog and register the library root.",
     "add-source": "Register a staging root (a dump folder).",
     "scan": "Walk roots and record files, hashes, and metadata.",
+    "quick-dedupe": "Hash inbox files and catalog/move only exact duplicates to trash.",
+    "clean": "Permanently empty library trash, remove its records, and compact SQLite.",
     "find-packs": "Identify packs (map packs, token sets, ...) with an LLM.",
     "enrich": "Look up external evidence and extract with an LLM.",
     "update-product": "Record a judgment about entries (the MCP writer).",
@@ -60,6 +64,8 @@ _HANDLERS: dict[str, Handler] = {
     "init": init.run,
     "add-source": add_source.run,
     "scan": scan.run,
+    "quick-dedupe": quick_dedupe.run,
+    "clean": clean.run,
     "find-packs": find_packs.run,
     "enrich": enrich.run,
     "update-product": tools.update_product,
@@ -194,6 +200,23 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup.add_argument("--out", type=Path, help="Write the full JSON rename preview.")
     verbs["scan"].add_argument(
         "--root", type=Path, help="Scan only this registered root (default: all)."
+    )
+    qd = verbs["quick-dedupe"]
+    qd.add_argument(
+        "--root",
+        type=Path,
+        required=True,
+        help="The registered staging inbox to clean.",
+    )
+    qd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Hash and preview duplicates without catalog writes or moves.",
+    )
+    verbs["clean"].add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview trash cleanup without deleting or compacting.",
     )
     fp = verbs["find-packs"]
     fp.add_argument(

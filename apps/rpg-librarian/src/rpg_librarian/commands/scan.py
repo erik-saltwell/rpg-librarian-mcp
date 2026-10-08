@@ -82,6 +82,7 @@ from ..observability import (
 )
 from ..paths import TRASH_DIRNAME
 from ..progress import track
+from ..services.duplicates import duplicate_rank
 
 # Per-file tables that `scan` owns and replaces on every (re)extraction.
 _SCAN_TABLES = (
@@ -596,10 +597,17 @@ class Scanner:
         if len(rows) < 2:
             return
 
-        def rank(row: File) -> tuple[int, int, int]:
-            in_library = row.root_id == self.library_root_id
-            # A pack member is never demoted, so it wins: loose copies point at it.
-            return (0 if row.pack_id else 1, 0 if in_library else 1, row.id or 0)
+        def rank(row: File) -> tuple[int, int, int, int]:
+            return duplicate_rank(
+                row.pack_id,
+                row.root_id,
+                row.id or 0,
+                self.library_root_id,
+                orphan_duplicate=(
+                    row.disposition is Disposition.duplicate
+                    and row.duplicate_of_id is None
+                ),
+            )
 
         winner = min(rows, key=rank)
         if winner.disposition is Disposition.duplicate:

@@ -19,7 +19,7 @@ Safety rules, in order:
 - The only things deleted are sources just copied and verified, folders left empty by
   moves, and pre-existing empty folders under staging roots on unlimited real runs.
   Roots, hidden directory subtrees (including trash), and directory symlinks are
-  preserved during cleanup. Trash is emptied by hand.
+  preserved during cleanup. `clean` permanently empties trash and its catalog rows.
 
 `reorganize` writes only bookkeeping (the file's root, path, and `last_seen_at`), never
 product assignments.
@@ -118,7 +118,9 @@ def _display(placement: Placement, labels: dict[int, str]) -> str:
     return f"{labels[placement.root_id]}:{placement.relative_path}"
 
 
-def _check(placement: Placement, library: Path, pending_sources: set[Path]) -> Check:
+def check_placement(
+    placement: Placement, library: Path, pending_sources: set[Path]
+) -> Check:
     """Whether `placement` can move right now. Reads the filesystem, changes nothing."""
     source = _source_of(placement)
     try:
@@ -348,7 +350,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
             if placement.file_id in collided:
                 blocked[placement.file_id] = collided[placement.file_id]
                 continue
-            check = _check(placement, library, pending_sources)
+            check = check_placement(placement, library, pending_sources)
             if check.verdict == "blocked":
                 blocked[placement.file_id] = check.reason
             else:
@@ -423,7 +425,7 @@ def _execute(
                     deferred.append(placement)
                     stats.not_attempted += 1
                     continue
-                check = _check(placement, library, pending_sources)
+                check = check_placement(placement, library, pending_sources)
                 if check.verdict == "defer":
                     deferred.append(placement)
                     continue
@@ -432,7 +434,7 @@ def _execute(
                 if check.verdict == "blocked":
                     _record_blocked(session, placement, check.reason, stats, failures)
                 else:
-                    _apply(
+                    apply_placement(
                         session,
                         placement,
                         library_root,
@@ -516,7 +518,7 @@ def _record_blocked(
     stats.blocked_reasons[placement.file_id] = (placement.entry_id, reason)
 
 
-def _apply(
+def apply_placement(
     session: Session,
     placement: Placement,
     library_root: Root,

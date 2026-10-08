@@ -1,13 +1,13 @@
 ---
 name: review-items
-description: Report every catalog item with an open review flag, every file or pack the last `reorganize` could not move (usually a naming conflict), every folder `find-packs` saw as a pack but left as loose files, and hidden files not identified as RPG-librarian infrastructure, with options for resolving each. Use when the user asks to see, list, inspect, or review deferred, needs-review, flagged, blocked, or not-moved RPG-librarian items. Makes no catalog changes unless the user confirms a proposed resolution.
+description: Report every catalog item with an open review flag, every file or pack the last `reorganize` could not move (usually a naming conflict), and every folder `find-packs` saw as a pack but left as loose files, with options for resolving each. Use when the user asks to see, list, inspect, or review deferred, needs-review, flagged, blocked, or not-moved RPG-librarian items. Makes no catalog changes unless the user confirms a proposed resolution.
 ---
 
 # Review Items
 
 ## Overview
 
-Report three catalog queues and a filesystem review queue:
+Report three queues from the RPG librarian catalog:
 
 1. **Review flags**: items with an open `review_flag` row (`resolved_at IS NULL`).
 2. **Blocked by reorganize**: items with an `error` row whose `stage` is
@@ -19,9 +19,6 @@ Report three catalog queues and a filesystem review queue:
    form (`folder_judgment.outcome` `mixed`: forming it would lose a decision; `invalid`:
    the answer failed validation; `error`: the search or model call failed and will be
    retried).
-4. **Hidden files**: files whose basename starts with `.` that are not identified as
-   RPG-librarian infrastructure. These usually have no catalog entry because `scan`
-   skips dotfiles and dot-directories. Let the user decide whether to delete them.
 
 Every item ID is an entry ID (`entry.id`), the ID the MCP tools take. An entry is a file
 (`entry.file_id`) or a pack (`entry.pack_id`): a set of files with one collective
@@ -109,8 +106,7 @@ after the user picks an option.
    `stored_path` exactly as returned from the database. Do not infer a filesystem path.
 7. Classify and investigate each blocked file (see **Blocked files** below) and each
    folder left as loose files (see **Folders left as loose files**).
-8. Collect hidden files from the filesystem (see **Hidden files**).
-9. Report (see **Report**).
+8. Report (see **Report**).
 
 ## Blocked files
 
@@ -215,37 +211,6 @@ Then offer the options that fit, recommending one with a short reason:
 Say what you need from the user when the evidence cannot decide, for example which of
 two different files to keep or what to call one.
 
-## Hidden files
-
-Query registered roots with `SELECT id, kind, path, label FROM root ORDER BY id`.
-Use the returned `root.path` as the filesystem base; do not guess mount locations.
-With available local filesystem tools, walk reachable roots read-only, including
-hidden directories, without following directory symlinks. Collect regular files whose
-basename starts with `.`. Include uncataloged files; `scan` excludes these paths.
-Do not read file contents: metadata and path evidence suffice for this review, and
-hidden files may contain secrets.
-
-Exclude the whole `.trash` subtree and identified RPG-librarian infrastructure:
-installed `review-items` and `process-batch` skill folders under `.claude/skills`,
-`.codex/skills`, and `.gemini/skills`; files ending in `.rpg-librarian-partial`; and
-configuration or bookkeeping files whose known purpose or references establish that
-they belong to this librarian deployment. A leading dot, a generic name such as
-`.env` or `.mcp.json`, or location inside an agent directory alone does not establish
-ownership. Keep uncertain files in the review and explain the uncertainty. Do not
-exclude every hidden directory or every file mentioning RPG-librarian.
-
-Report root label/ID, exact relative path, size in bytes, and why the file merits
-review (for example, `.DS_Store` looks like OS metadata, or ownership is unknown).
-Hidden does not mean empty or disposable. Offer **Keep** and **Delete after explicit
-confirmation**, with a reason when evidence supports a recommendation. Files without
-catalog entries have no item ID: identify them by root and exact relative path.
-Do not call `update_product` for them, assign a fake ID, or delete them during review.
-For a confirmed deletion, state that a separate filesystem action is required and
-identify the exact files; this skill does not perform filesystem deletion.
-
-If filesystem tools are unavailable or a root cannot be read, report that coverage
-limitation. Do not claim this queue is empty unless all roots were inspected.
-
 ## Report
 
 1. **Review flags**: one Markdown table, ordered by item ID, with exactly these columns:
@@ -265,20 +230,14 @@ limitation. Do not claim this queue is empty unless all roots were inspected.
    | Root | Folder | Outcome | Reason |
 
    State the total, or say that `find-packs` formed every pack it found.
-4. **Hidden files**: one Markdown table ordered by root and relative path:
-
-   | Root | Relative path | Size (bytes) | Review reason |
-
-   State the total and any roots not inspected. If all roots were inspected and no
-   candidates remain, say that no hidden files need review.
-5. **Proposed resolutions**: when many conflicts share one cause (such as one product's
+4. **Proposed resolutions**: when many conflicts share one cause (such as one product's
    sub-folders), present them as a single entry with one proposed rule and a few
    example renames rather than one entry each. Otherwise, one numbered entry per
    conflict group, giving the files
    involved, what the comparison showed, the options with the recommended one first,
    and any question for the user. List stale-scan files together with the instruction
    to run `scan`.
-6. Ask the user which options to apply. After applying confirmed choices, report what
+5. Ask the user which options to apply. After applying confirmed choices, report what
    changed and tell the user to run `rpg-librarian reorganize --dry-run`. Resolved
    files stay in the blocked queue until the next `reorganize` run replaces it.
 
@@ -288,8 +247,7 @@ limitation. Do not claim this queue is empty unless all roots were inspected.
   `update_product`, `rename-file`, `create-pack`, `add-to-pack`, or
   `remove-from-pack`. Never call `scan`, `find-packs`, `enrich`, or `reorganize`.
 - Never query `file_text.sample_pages`.
-- Do not include resolved review flags, automatic duplicates, or unflagged unfiled files
-  in the catalog queues. The hidden-file queue also includes uncataloged files.
+- Do not include resolved review flags, automatic duplicates, or unflagged unfiled files.
 - Keep review reasons and error text verbatim apart from removing the exception name
   and Markdown-table escaping.
 - If a tool returns an error, read the message and correct the call. Do not repeat the

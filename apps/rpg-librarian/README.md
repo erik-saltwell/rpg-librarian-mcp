@@ -1,7 +1,8 @@
 # rpg-librarian
 
 Turns unorganized dumps of RPG content on a network share into an organized library.
-Runs as a CLI (`init`, `add-source`, `scan`, `find-packs`, `enrich`, `reorganize`) or
+Runs as a CLI (`init`, `add-source`, `scan`, `quick-dedupe`, `clean`, `find-packs`,
+`enrich`, `reorganize`) or
 as a FastMCP stdio server (`serve`). The usual order is `scan`, `find-packs`, `enrich`,
 then filing (the `process-batch` skill), then `reorganize`. See `.work-items/rpg-librarian-app-refactor/` for the design.
 
@@ -33,8 +34,106 @@ and `remove-from-pack`. Every id they take or return is an entry id: a file's or
 pack's. The filing operations are also available on the command line (`list-unfiled`,
 `list-types`, `list-lines`, `report-entry`, `report-product`, `report-line`,
 `update-product`, `clear-errors [--stage STAGE ...]`, `report-pack`, `create-pack`,
-`add-to-pack`, `remove-from-pack`) and print JSON. Nothing moves on the share until you
-run `reorganize`.
+`add-to-pack`, `remove-from-pack`) and print JSON. Filing decisions move files when
+you run `reorganize`; `quick-dedupe` finds and moves duplicate files immediately.
+
+## Quickly cleaning a large incoming dump
+
+Use `quick-dedupe` before normal scanning when most incoming files are exact copies
+of content already known to the catalog:
+
+```bash
+rpg-librarian add-source /phinneas/rpg/inbox
+rpg-librarian quick-dedupe --root /phinneas/rpg/inbox --dry-run
+rpg-librarian quick-dedupe --root /phinneas/rpg/inbox
+```
+
+Use the usual `--catalog PATH` option if needed. `--root` is required and must be a
+registered staging root. The command refuses an inbox containing cataloged files
+other than pending duplicates from earlier cleanup runs. It leaves every survivor
+uncataloged, so moving the remaining files into an unregistered
+`/phinneas/rpg/holding-pen` creates no dangling catalog references. Preserve folders,
+then move complete folders back into inbox in manageable batches and run
+`scripts/process-batch.zsh`. Moving the survivors out empties inbox; copying alone
+leaves them there.
+
+The command filters candidates by size and streams SHA-256 directly from the share.
+It does no metadata/text extraction, OCR, enrichment, or pack discovery. It matches
+present cataloged content (including cataloged trash) whose recorded size and
+modified time still match, and also retains one copy of new content repeated within
+the inbox. Existing pack members and library copies take precedence. Originals
+are not rehashed; bring the existing catalog up to date before importing a dump.
+`scripts/process-batch.zsh` runs quick cleanup first, then its usual full processing
+sequence. If preliminary cleanup fails or refuses an already-cataloged inbox, it
+prints a message and continues with normal scan. Duplicate-heavy fresh batches
+avoid extraction work; mostly unique batches can take longer because survivors may
+be hashed by both commands.
+As with normal scan, dotfiles, hidden directory trees and agent instruction files
+are excluded. Directory symlinks are not followed; file symlinks and nonregular
+files are reported as errors. Empty directories are left in place.
+
+Only confirmed duplicate occurrences get file/entry rows. They go immediately to
+`<library>/.trash/duplicates/<source-id>-<source-name>/<original-relative-path>`
+using the same filename allocation, non-overwriting movement, verified copying
+across filesystems, and catalog bookkeeping as `reorganize`. Unrelated filing
+decisions and errors are left alone. Keeping inbox and library on the same filesystem
+allows cheap renames; across filesystems the duplicates must be copied and verified.
+
+An extra inbox copy whose original is still uncataloged has a null
+`duplicate_of_id`. Such unlinked duplicate rows are excluded from quick cleanup's
+known originals, so rerunning does not consume the retained inbox survivor. When
+normal scan later catalogs that survivor, it wins over these unlinked trash copies
+and supplies their original id. Other cataloged trash participates normally.
+
+`--dry-run` hashes and prints proposed moves without changing the catalog or files.
+The final summary reports files seen/hashed, bytes hashed, duplicates, survivors,
+moves, and errors. Errors return a nonzero exit status: resolve them and rerun before
+moving the remaining inbox files into holding-pen. Failed moves leave cataloged
+duplicate rows at their source, retryable by this command or `reorganize`. A survivor
+without a catalog row will be hashed again on a later cleanup run if its size still
+has potential matches.
+
+## Emptying trash and reclaiming space
+
+```bash
+rpg-librarian clean --dry-run
+rpg-librarian clean
+```
+
+Add `--catalog PATH` if needed. `clean` permanently deletes contents of the library's
+`.trash/duplicates/`, `.trash/superseded/`, and `.trash/discarded/` buckets, including
+uncataloged and hidden files. It removes their file/entry records, dependent metadata,
+evidence, errors and review flags. Packs are removed when their last member is gone,
+along with their entry/evidence and linked folder judgments. Catalog records for trash
+files already removed by hand are cleaned too. Empty bucket directories are removed;
+the library root and `.trash` root remain.
+
+Other library files, staging roots, unknown trash buckets, products and product lines
+are retained. Files and pack members marked keep but still sitting in trash are
+blocked: run `reorganize` to move them out before cleaning. Symbolic links inside
+trash are unlinked without following their targets; symlinked trash/bucket roots are
+refused. File changes during enumeration are reported rather than deleted.
+
+Surviving automatic duplicates whose original is removed become unfiled, have their
+original reference cleared, and are scheduled for full rescanning. This prevents
+a later `reorganize` from trashing the last remaining copy, including hash-only files
+created by `quick-dedupe`. Explicit filing decisions on surviving files are retained.
+
+Successful deletions are committed to the catalog in batches. Failed file deletions
+leave their rows intact and return a nonzero exit status. If a catalog write fails
+after files have been deleted, rerun `clean` to remove the now-absent trash records.
+Committed filesystem deletions cannot be undone. `--dry-run` only previews cleanup;
+it deletes nothing and does not compact the database.
+
+After cleanup, SQLite `VACUUM` compacts the catalog to reclaim unused database pages.
+The summary reports deleted bytes/files, removed records/packs, released duplicates,
+errors, and catalog size before/after compaction. A compaction failure also returns
+nonzero; the completed cleanup remains committed and `clean` can be rerun. Compaction
+needs temporary disk space to rewrite SQLite and can be blocked by active database
+operations.
+
+Cleaning forgets the removed content's hashes and decisions. Unlike keeping cataloged
+trash, it will not suppress the same discarded file if it appears in a future dump.
 
 ## Packs
 
