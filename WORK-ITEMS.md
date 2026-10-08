@@ -9,5 +9,5 @@
 | Pack migration | complete | [.work-items/pack-migration/](.work-items/pack-migration/) |
 | Per-pack Google lookup for asset media | complete | [.work-items/per-pack-google-lookup/](.work-items/per-pack-google-lookup/) |
 | Quick duplicate cleanup | complete | [.work-items/quick-dedupe/](.work-items/quick-dedupe/) |
-| Refactor rpg-librarian to new app | implementing | [.work-items/rpg-librarian-app-refactor/](.work-items/rpg-librarian-app-refactor/) |
+| Refactor rpg-librarian to new app | complete | [.work-items/rpg-librarian-app-refactor/](.work-items/rpg-librarian-app-refactor/) |
 | Sanitize library filenames | complete | [.work-items/sanitize-library-filenames/](.work-items/sanitize-library-filenames/) |

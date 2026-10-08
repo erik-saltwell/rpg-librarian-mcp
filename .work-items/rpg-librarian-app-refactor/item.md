@@ -1,6 +1,6 @@
 ---
 name: "Refactor rpg-librarian to new app"
-status: implementing
+status: complete
 ---
 
 # Refactor rpg-librarian to new app
@@ -28,7 +28,15 @@ CLI true-up.
 - [progress.md](progress.md) — current handoff: completed phases, actual verification
   outcomes, remaining work.
 
-## Resume note
+## Completion note (2026-10-08)
+
+Marked complete at the user's explicit direction. Phases 0–5 are recorded as
+implemented in [progress.md](progress.md). No additional implementation or behavior
+verification was performed for this closure. Historical Phase 6 checkboxes and
+manual-verification notes remain as recorded; closure does not assert that those
+checks or the old-package removal were completed.
+
+## Historical resume note (superseded by completion)
 
 Status is `implementing`; Phases 0 to 5 of `plan.md` are done (see `progress.md`). The
 catalog location is `./catalog.db` (with `--catalog` / `RPG_LIBRARIAN_CATALOG` overrides).

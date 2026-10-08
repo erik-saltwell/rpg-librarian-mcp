@@ -1,5 +1,14 @@
 # Progress
 
+## Closure (2026-10-08)
+
+Status: `complete`, at the user's explicit direction. No additional implementation
+or behavior verification was performed for closure. The implementation and
+verification notes below are historical; their remaining tasks and conflicting
+manual-check notes were not reconciled or asserted complete.
+
+## Historical handoff
+
 Current handoff for [plan.md](plan.md). Status: `implementing`. Phases 0 to 5 are
 done; continue at Phase 6 (remove v1 and finish). Manual-testing checkpoint 3 is next: run
 `reorganize --dry-run`, then `reorganize`, on a *copy* of a small dump and part of the library. **Manual-testing checkpoint 2 is now:** register
