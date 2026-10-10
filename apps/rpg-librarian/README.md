@@ -8,6 +8,12 @@ then filing (the `process-batch` skill), then `reorganize`. See `.work-items/rpg
 
 ## Agent skills
 
+Travel guidebooks use the `travel-guides` product type, with the publisher or guide
+series as the product line (for example `Lonely Planet`) and the individual book as
+the product (for example `Japan, 18th Edition`). Other guide publishers can have
+their own lines under the same type. Re-run `rpg-librarian init --library <library>
+--catalog <catalog.db>` to add missing seed types to an existing catalog.
+
 `init` installs the bundled `process-batch` and `review-items` skills into all three
 project-local agent locations: `.claude/skills/`, `.codex/skills/`, and
 `.gemini/skills/`. Existing local copies are never overwritten, so they may be

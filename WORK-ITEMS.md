@@ -11,3 +11,4 @@
 | Quick duplicate cleanup | complete | [.work-items/quick-dedupe/](.work-items/quick-dedupe/) |
 | Refactor rpg-librarian to new app | complete | [.work-items/rpg-librarian-app-refactor/](.work-items/rpg-librarian-app-refactor/) |
 | Sanitize library filenames | complete | [.work-items/sanitize-library-filenames/](.work-items/sanitize-library-filenames/) |
+| Travel guide product type | complete | [.work-items/travel-guides/](.work-items/travel-guides/) |

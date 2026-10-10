@@ -130,6 +130,9 @@ cannot be identified, defer it with a review flag rather than guessing.
   Google hits on a loose map, token, image, audio, or other non-PDF file come from a
   search for its folder, not for the file.
 - Treat one standalone PDF (a core rulebook or adventure) as its own product.
+- File travel guidebooks under `travel-guides`, using the publisher or guide series
+  (such as `Lonely Planet`) as the product line and the individual book, including
+  its edition when known, as the product.
 - Treat standalone map packs, music, sound effects, miniatures, and terrain as their
   own product under a functional type, not under a game.
 - Distinguish revisions and print variants from distinct game or book editions. Mark a
