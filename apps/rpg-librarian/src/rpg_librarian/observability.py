@@ -261,12 +261,15 @@ class FileTracker:
         self.fields: dict[str, Any] = dict(fields)
         self.outcome: str | None = None
         self.error_message: str | None = None
+        self._failed_stage: str | None = None
         self._start = time.perf_counter()
         self._start_time = datetime.now(UTC).isoformat()
         self._tokens: list[Any] = []
 
     def mark_error(self, message: str | None = None) -> None:
         self.outcome = "error"
+        if self._failed_stage is None:
+            self._failed_stage = self.fields.get("stage", "processing")
         if message and self.error_message is None:
             self.error_message = message
 
@@ -276,6 +279,20 @@ class FileTracker:
         return self
 
     def stage(self, stage: str, *, event: str = "file_stage_started") -> None:
+        from .progress import activity
+
+        operation = stage.replace("_", " ")
+        if stage == "start":
+            operation = (
+                f"fetch {self.fields['source']} evidence"
+                if self.fields.get("source")
+                else {
+                    "dedupe": "check content hash",
+                    "moved": "move to destination",
+                    "trashed": "move to trash",
+                }.get(self.fields.get("action"), "inspect input")
+            )
+        activity(f"{self.path} · {operation}")
         self.fields["stage"] = stage
         _emit(
             event,
@@ -308,6 +325,13 @@ class FileTracker:
             event["error_message"] = self.error_message[:_MAX_VALUE_LEN]
         event["outcome"] = outcome
         _emit("file", **event)
+        if outcome == "error":
+            from .progress import warning
+
+            operation = (
+                self._failed_stage or self.fields.get("stage", "processing")
+            ).replace("_", " ")
+            warning(f"{self.path} · {operation} failed; details recorded in events.log")
 
         _file_fields.reset(self._tokens[0])
         _current_file.reset(self._tokens[1])

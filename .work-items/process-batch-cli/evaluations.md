@@ -72,3 +72,25 @@ The approved rubric definitions in intent.md remain unchanged.
   exercised failures. A stage exit of zero did not conceal handled errors. Recovery
   marked abandoned runs interrupted, while unavailable counts stayed unknown.
   Delivery uncertainty during an abrupt SMTP interruption remains explicit.
+
+## Terminal progress follow-up assessment
+
+Evaluated the completed 2026-10-16 follow-up against the unchanged rubric in intent.md.
+The owner's observed production run exposed a diagnostic usability gap in the prior
+version: private evidence existed, but a long stage appeared idle in the terminal.
+
+- **Ease of routine use:** the invocation is unchanged; an actual terminal shows
+  current activity/counts and elapsed time. Redirected output remains readable.
+  Real 48/100-column PTY and a slow redirected lookup were checked.
+- **Dependable unattended execution:** existing crash/agent/mail behavior checks
+  still pass, and actual SIGTERM restores output and returns 143. Display writes
+  are optional and child logs/results stay separate. Live cloud behavior unassessed.
+- **Trustworthy review awareness:** final terminal reporting includes the shared
+  backlog and notification status/reason; existing quiet/review/SMTP checks passed.
+  The collector and email eligibility policy were not changed by this follow-up.
+- **Diagnostic clarity:** all six stages expose meaningful progress and summaries;
+  waits identify elapsed time since reported activity, not an asserted stall.
+  Corrupt inputs show bounded affected paths and the first failed operation.
+  Pack/filing activity avoids invented fixed totals. Large-library display overhead
+  and long live-agent sessions remain unmeasured; controlled integration verified
+  the actual CLI/MCP/status boundary and 17-second lookup waiting behavior.

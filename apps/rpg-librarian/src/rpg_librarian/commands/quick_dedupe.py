@@ -27,7 +27,7 @@ from ..observability import (
     mark_file_error,
 )
 from ..paths import desired_trash_path
-from ..progress import track
+from ..progress import report, track
 from ..services.duplicates import duplicate_rank
 from ..services.filename_policy import PathAllocator
 from ..services.placement import Placement
@@ -197,6 +197,7 @@ class Deduper:
                 self.stats.seen += 1
                 relative = path.relative_to(self.base).as_posix()
                 existing = self.existing.get(relative)
+                progress(index - 1, relative, self.stats.errors + self.moves.errors)
                 with FileTracker(
                     existing[0] if existing else None, path, action="dedupe"
                 ):
@@ -360,6 +361,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
     wanted = args.root.expanduser().resolve()
     if not wanted.is_dir():
         raise UsageError(f"Inbox {wanted} is not an existing directory.")
+    report("Prepare quick dedupe", detail="Loading catalog and inbox candidates")
     with session_scope(catalog_path, migrate=not args.dry_run) as session:
         roots = {r.id: r for r in session.exec(select(Root)).all() if r.id is not None}
         library = next((r for r in roots.values() if r.kind is RootKind.library), None)

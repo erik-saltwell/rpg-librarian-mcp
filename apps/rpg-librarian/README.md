@@ -303,6 +303,27 @@ Filing includes visual inspection and pack tools; arbitrary shell tools and phys
 renaming are not available to the agent. Uncertain judgments become review flags.
 It does not open an interactive review session. Review later with `/review-items`.
 
+The terminal shows a live stage display with elapsed time, counts and the current
+file, folder, lookup source or agent tool. Scan and dedupe name the input before
+working on it. Enrichment counts entries or shared queries as appropriate; pack
+search/model activity and catalog filing progress are shown separately. Reorganization
+shows placement planning and current moves. Known totals get a progress bar; work
+with a dynamically discovered total uses activity counts without a guessed percentage.
+
+A slow operation keeps the elapsed clock visible and shows how long it has been
+since the last reported progress. This is a wait indication, not proof of a stall.
+When stderr is redirected or the terminal is dumb, status is printed at phase
+changes and at least every 15 seconds while a stage is running, without ANSI cursor
+controls. A few affected file paths are shown for recoverable errors; further issues
+stay in the detailed logs. Every stage leaves outcome/counts, and the final summary
+shows stage results, total review backlog and email status/reason.
+
+Progress is separate from private child stdout/stderr and the agent's JSON result.
+Stage snapshots are retained as `<stage>-progress.json` beside the run summary;
+filing's optional activity snapshot contains tool names/status only, never arguments
+or model/document content. Existing running parent processes keep their old display;
+new invocations pick up the improved output without changing the command.
+
 Each invocation prints a private local summary path under
 `logs/process-batch/<run-id>/summary.json` beside the catalog. It includes stage
 outcomes/counters, new-input observations, total/category review counts, and email

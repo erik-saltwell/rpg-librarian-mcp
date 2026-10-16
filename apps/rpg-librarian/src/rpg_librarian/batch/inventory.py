@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from sqlmodel import select
@@ -12,7 +13,15 @@ from ..infrastructure.walk import walk_files
 from ..model import Root, RootKind
 
 
-def inspect(catalog: Path, root: Path) -> dict:
+def inspect(catalog: Path, root: Path, *, on_progress=None) -> dict:
+    if on_progress is not None:
+        on_progress(
+            {
+                "description": "Inspecting inbox",
+                "detail": str(root),
+                "updated_at": time.monotonic(),
+            }
+        )
     if not catalog.is_file():
         raise UsageError("The catalog does not exist. Run init first.")
     with session_scope(catalog) as session:
@@ -68,4 +77,15 @@ def inspect(catalog: Path, root: Path) -> dict:
             result["retry"] += 1
         else:
             result["unchanged"] += 1
+        if on_progress is not None:
+            on_progress(
+                {
+                    "description": "Inspecting inbox",
+                    "completed": result["seen"],
+                    "total": None,
+                    "unit": "files",
+                    "detail": relative,
+                    "updated_at": time.monotonic(),
+                }
+            )
     return result

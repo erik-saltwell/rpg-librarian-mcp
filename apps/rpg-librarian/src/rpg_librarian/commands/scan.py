@@ -82,7 +82,7 @@ from ..observability import (
     mark_file_error,
 )
 from ..paths import TRASH_DIRNAME
-from ..progress import track
+from ..progress import activity, report, track
 from ..services.duplicates import duplicate_rank
 
 # Per-file tables that `scan` owns and replaces on every (re)extraction.
@@ -163,7 +163,15 @@ class Scanner:
         if not base.is_dir():
             self.stats.unreachable_roots.append(root.path)
             return None
-        return [p.relative_to(base).as_posix() for p in walk_files(base)]
+        report("List scan files", detail=str(base), unit="files")
+        paths = []
+        for path in walk_files(base):
+            relative = path.relative_to(base).as_posix()
+            paths.append(relative)
+            report(
+                "List scan files", completed=len(paths), detail=relative, unit="files"
+            )
+        return paths
 
     def mark_missing(self, root: Root, seen_paths: set[str]) -> None:
         """Flag rows under a reachable root whose path has gone.
@@ -195,6 +203,7 @@ class Scanner:
             track(f"scan {root.label or base.name}", len(candidates)) as progress,
         ):
             for index, relative in enumerate(candidates, start=1):
+                progress(index - 1, relative, self.stats.errored)
                 self._scan_one(root, base, relative, Path(tmp))
                 self.session.commit()  # one file, one transaction
                 progress(index, relative, self.stats.errored)
@@ -679,6 +688,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
             for root in roots:
                 listing = listings[root.id]
                 if listing is not None:
+                    activity(f"Reconcile missing files: {root.path}")
                     scanner.mark_missing(root, set(listing))
             for root in roots:
                 listing = listings[root.id]

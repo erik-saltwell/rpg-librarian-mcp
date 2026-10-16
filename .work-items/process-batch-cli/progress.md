@@ -113,3 +113,56 @@ once after a crash during delivery; the CLI does not replay old run notification
 
 See [evaluations.md](evaluations.md) for the final evidence against the approved
 quality dimensions. No commit, merge, or live production batch was performed.
+
+## Terminal progress follow-up — completed 2026-10-16
+
+The owner observed an active production enrichment stage showing only `enrich...`.
+The first implementation captured child output privately and displayed only stage
+names. This follow-up adds a separate, stage-owned structured progress snapshot and
+a parent display without scraping canonical event logs or private model output.
+
+- TTY display: stage position/name, live elapsed clock, counts/percent when total is
+  meaningful, current file/folder/source/tool, errors and waiting since last progress.
+  Dynamic pack discovery and filing do not invent a fixed total/ETA.
+- Non-TTY/dumb terminal: bounded phase updates and 15-second status while waiting,
+  with no ANSI cursor controls. Initial inbox inspection and final reporting are
+  visible. Completed stages leave concise metrics and actionable diagnostics links.
+- All six stages reviewed: dedupe/scan/enrich/moves name current work before slow
+  calls; scan emits extraction substages; enrichment uses query vs entry units;
+  packs report folders/cache/model/search activity; filing reports actual catalog
+  remaining counts and optional MCP tool activity. Fast SQL counts match the normal
+  worklist for present, flagged, resolved and missing-member packs.
+- Recoverable per-file issues show the first five affected inputs and then a capped
+  further-issues notice. Error warnings retain the first failed operation even when
+  cleanup subsequently runs. Untrusted paths are rendered literally, without Rich
+  markup or terminal control interpretation.
+- Private stdout/stderr, valid agent JSON, stage metrics/outcomes, notification rules,
+  process groups, locks, recovery and interruption exit codes remain intact. Only
+  optional progress paths/tool status are added to worker/MCP configuration.
+
+Verification (disposable catalogs; no production restart, processing or real email):
+
+- `/tmp/check-batch-terminal.py`: real dedupe, scan, pack/enrichment loops and moves;
+  controlled external model/lookup operations; actual agent/MCP writes and encrypted
+  loopback SMTP. A 17-second lookup emitted waiting status in redirected output.
+  All six progress snapshots and the safe filing-tool snapshot were produced;
+  private stderr remained free of hidden Rich progress animations. Real 100-column
+  PTY completed with live output. Artifacts `/tmp/rpg-batch-integration-ccc3xnw1/`.
+- `/tmp/check-batch-pty.py`: actual 48-column PTY, readable narrow rendering, balanced
+  cursor hide/restore and full pipeline completion. Artifacts
+  `/tmp/rpg-batch-integration-t7r233u8/`. A direct 80/48-column rendering check caught
+  and fixed a bar/detail line-break issue before completion.
+- `/tmp/check-batch-terminal-errors.py`: real corrupt image inputs, capped literal
+  path warnings, correct execution-issue counts, all no-work stages and filing skip
+  explanation, and actual SIGTERM with retained interrupted-stage output/exit 143.
+  Artifacts `/tmp/rpg-batch-integration-ql8wy4fq/`.
+- Existing `/tmp/check-batch-integration.py` behavior checks passed again, including
+  CLI/MCP/image transport, normal/quiet/review runs, fatal/signal/dedupe fallback,
+  invalid/failed/partial agent work, safe reruns and SMTP refusal. Log:
+  `/tmp/check-batch-progress-regression.log`.
+- Ruff lint/format, application ty and `git diff --check` passed. No unit tests,
+  suites or tooling were added. No live lookup/model reliability is claimed.
+
+The production launcher already uses this editable checkout, so new invocations
+receive the display. The owner's already-running parent was not stopped or changed;
+it keeps the old output behavior. No commit or merge was made for this follow-up.

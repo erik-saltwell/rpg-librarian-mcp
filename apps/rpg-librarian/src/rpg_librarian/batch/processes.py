@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
@@ -34,6 +35,7 @@ def execute(
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
     own_group: bool = True,
+    on_tick: Callable[[], None] | None = None,
 ) -> int:
     with stdout.open("wb") as out, stderr.open("wb") as err:
         stdout.chmod(0o600)
@@ -47,7 +49,16 @@ def execute(
             start_new_session=own_group,
         ) as process:
             try:
-                return process.wait()
+                while True:
+                    if on_tick is not None:
+                        on_tick()
+                    try:
+                        code = process.wait(timeout=0.25 if on_tick else None)
+                    except subprocess.TimeoutExpired:
+                        continue
+                    if on_tick is not None:
+                        on_tick()
+                    return code
             finally:
                 if own_group:
                     stop_group(process.pid)

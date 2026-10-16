@@ -7,12 +7,13 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from importlib import resources
 from pathlib import Path
 
-from ..db import session_scope
+from ..db import readonly_connection
 from ..errors import UsageError
-from ..services.lists import list_unfiled
+from ..progress import active, report
 from .processes import execute
 from .records import write_json
 
@@ -34,12 +35,23 @@ _TOOLS = (
 
 
 def remaining(catalog: Path) -> int:
-    with session_scope(catalog, migrate=False) as session:
-        work = list_unfiled(session)
-    return work["total_unfiled_files"] + work["total_unfiled_packs"]
+    # Match the unflagged list_unfiled worklist without loading every file/pack
+    # report for each display refresh. SQL uses the same present-member rules.
+    with readonly_connection(catalog) as db:
+        return db.execute("""
+SELECT count(*) FROM entry e
+LEFT JOIN file f ON e.file_id=f.id
+LEFT JOIN pack p ON e.pack_id=p.id
+WHERE ((f.disposition='unfiled' AND f.missing_since IS NULL)
+    OR (p.disposition='unfiled' AND EXISTS (
+        SELECT 1 FROM file m WHERE m.pack_id=p.id AND m.missing_since IS NULL)))
+AND NOT EXISTS (SELECT 1 FROM review_flag r
+    WHERE r.entry_id=e.id AND r.resolved_at IS NULL)
+""").fetchone()[0]
 
 
 def file_catalog(catalog: Path, directory: Path, *, source: str | None = None) -> dict:
+    report("Prepare filing", detail="Counting unflagged catalog entries")
     before = remaining(catalog)
     if before == 0:
         return {
@@ -51,6 +63,7 @@ def file_catalog(catalog: Path, directory: Path, *, source: str | None = None) -
     if not executable:
         raise UsageError("Install and sign in to the Claude CLI for unattended filing.")
     config = directory / "filing-mcp.json"
+    activity_path = directory / "filing-activity.json"
     write_json(
         config,
         {
@@ -58,6 +71,7 @@ def file_catalog(catalog: Path, directory: Path, *, source: str | None = None) -
                 "rpg-librarian": {
                     "command": sys.executable,
                     "args": ["-m", "rpg_librarian", "serve", "--catalog", str(catalog)],
+                    "env": {"RPG_LIBRARIAN_TOOL_ACTIVITY_PATH": str(activity_path)},
                 }
             }
         },
@@ -116,6 +130,49 @@ The catalog is authoritative; your text cannot substitute for committed decision
         *[f"mcp__rpg-librarian__{name}" for name in _TOOLS],
     ]
     output = directory / "filing-result.json"
+    current = before
+    last_checked = 0.0
+    last_signal = None
+    last_detail = "Starting Claude; waiting for its first tool call"
+
+    def progress() -> None:
+        nonlocal current, last_checked, last_signal, last_detail
+        if not active():
+            return
+        changed = False
+        clock = time.monotonic()
+        if clock - last_checked >= 5:
+            try:
+                count = remaining(catalog)
+                changed = count != current
+                current = count
+            except Exception:
+                # A busy writer should not abort an otherwise healthy filing run.
+                pass
+            last_checked = clock
+        try:
+            stat = activity_path.stat()
+            if stat.st_mtime_ns != last_signal:
+                signal = json.loads(activity_path.read_text())
+                last_detail = f"Claude tool: {signal['tool']} ({signal['status']})"
+                last_signal = stat.st_mtime_ns
+                changed = True
+        except (OSError, ValueError, KeyError):
+            pass
+        if changed:
+            report(
+                "Agent filing",
+                counts=f"{current:,} unfiled entries remaining · {before:,} at start",
+                detail=last_detail,
+                force=True,
+            )
+
+    report(
+        "Agent filing",
+        counts=f"{before:,} unfiled entries remaining",
+        detail=last_detail,
+        force=True,
+    )
     with tempfile.TemporaryDirectory(prefix="rpg-batch-filing-") as temp:
         code = execute(
             command,
@@ -124,6 +181,7 @@ The catalog is authoritative; your text cannot substitute for committed decision
             cwd=Path(temp),
             env=env,
             own_group=False,
+            on_tick=progress,
         )
     if code:
         raise RuntimeError(

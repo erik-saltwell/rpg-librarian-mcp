@@ -68,6 +68,7 @@ from ..model import (
     Root,
 )
 from ..observability import log_call_fields
+from ..progress import report
 from ..services.pack_info import pack_views
 
 BATCH = 10  # sibling folders per model call
@@ -102,6 +103,7 @@ class Finder:
         self.limit: int | None = args.limit
         self.dry_run: bool = args.dry_run
         self.stats = Stats()
+        self.visited = 0
         if args.no_search:
             self.stats.search_disabled = "--no-search"
         elif (reason := serper_available()) is not None:
@@ -113,6 +115,20 @@ class Finder:
         self.claimed: set[int] = set()
         self.kept_products: set[int] = set()  # products given a kept pack this run
         self.searched: dict[str, tuple[str, list[dict[str, Any]]]] = {}
+
+    def progress(self, detail: str, *, force: bool = False) -> None:
+        report(
+            "Inspect folders for packs",
+            completed=self.visited,
+            total=None,
+            unit="folders",
+            detail=detail,
+            errors=len(self.stats.errors) + self.stats.search_errors,
+            force=force,
+            counts=f"{self.visited:,} folders inspected · "
+            f"{self.stats.calls:,} model calls · "
+            f"{self.stats.reused:,} cached · {len(self.stats.formed):,} packs formed",
+        )
 
     # -- setup ---------------------------------------------------------------
 
@@ -169,7 +185,10 @@ class Finder:
             parent, children = queue.popleft()
             candidates: list[FolderNode] = []
             for node in children:
+                self.progress(node.path)
                 verdict = self._visit(node)
+                self.visited += 1
+                self.progress(node.path)
                 if verdict == "ask":
                     candidates.append(node)
                 elif isinstance(verdict, list):
@@ -238,9 +257,18 @@ class Finder:
         ):
             self.stats.not_asked += len(batch)
             return
+        self.progress(
+            f"Search pack evidence: {parent.path or self.labels[parent.root_id]}",
+            force=True,
+        )
         summaries = {node.path: summary(node, self._search(node)) for node in batch}
         self.stats.calls += 1
         try:
+            self.progress(
+                f"Waiting for model: {len(batch)} folders under "
+                f"{parent.path or self.labels[parent.root_id]}",
+                force=True,
+            )
             answers = judge(parent.path, list(summaries.values()))
         except FatalSourceError as error:
             self.stats.stopped = str(error)
@@ -287,12 +315,14 @@ class Finder:
             else:
                 self._record(node, FolderOutcome.no_packs, answer.reason, {}, evidence)
         self.session.commit()
+        self.progress(parent.path)
 
     # -- searching -----------------------------------------------------------
 
     def _search(self, node: FolderNode) -> dict[str, Any] | None:
         if self.stats.search_disabled:
             return None
+        self.progress(f"Search evidence: {node.path}", force=True)
         query = search_query(node)
         if query is None:
             self.stats.searches_skipped += 1
@@ -482,6 +512,9 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
             roots = [r for r in roots if Path(r.path) == wanted]
             if not roots:
                 raise UsageError(f"{wanted} is not a registered root.")
+        report(
+            "Load pack candidates", detail="Building folder trees and cached judgments"
+        )
         finder = Finder(session, args)
         trees = finder.load(roots)
         for root in roots:

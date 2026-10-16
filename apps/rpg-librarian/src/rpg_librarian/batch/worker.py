@@ -9,6 +9,7 @@ import traceback
 from pathlib import Path
 
 from ..observability import CallTracker, configure_wide_event_logs
+from ..progress import configure
 from .records import write_json
 
 
@@ -50,6 +51,8 @@ def main() -> int:
     request_path = Path(sys.argv[1])
     result_path = request_path.with_name(request_path.stem + "-result.json")
     request = json.loads(request_path.read_text())
+    if request.get("progress"):
+        configure(Path(request["progress"]))
     catalog = Path(request["catalog"])
     name = request["name"]
     configure_wide_event_logs(catalog)

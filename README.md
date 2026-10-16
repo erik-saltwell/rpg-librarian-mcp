@@ -129,6 +129,10 @@ opening interactive review. Rerunning preserves committed work. Claude CLI and t
 existing SMTP settings are used; see the [batch documentation](apps/rpg-librarian/README.md#unattended-batch-processing)
 for email suppression, recovery, counters, and exit behavior.
 
+Live terminal output shows stage counts, current activity and elapsed time, with
+periodic plain-text status when redirected. Stage results and review/email status
+remain visible at completion; detailed private logs stay beside the run summary.
+
 `scripts/process-batch.zsh` forwards to this command with `/phinneas/rpg/inbox` as
 its default root. Interactive `/review-items` remains available separately.
 

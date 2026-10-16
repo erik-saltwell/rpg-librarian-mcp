@@ -20,5 +20,8 @@ updated. See [plan.md](plan.md) for completed phases and
 [progress.md](progress.md) for verification, production backup location, limitations,
 and the disclosed wrapper-check notification incident.
 
-Status is complete. No live production batch or live-model run was started; no
+Terminal progress follow-up is complete across all six stages. New invocations
+show current activity, counts, elapsed/wait time, bounded error paths and final
+review/email status. Actual PTY, redirected-output, error and interruption checks
+passed; see progress.md for details. Status is complete. No live production batch or live-model run was started; no
 commit or merge was made.

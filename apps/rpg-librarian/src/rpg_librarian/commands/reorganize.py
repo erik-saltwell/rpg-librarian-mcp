@@ -52,7 +52,7 @@ from ..observability import (
     mark_file_error,
 )
 from ..paths import TRASH_DIRNAME
-from ..progress import track
+from ..progress import report, track
 from ..services.file_moves import rename_no_replace
 from ..services.placement import Placement, compute_placements
 
@@ -334,6 +334,9 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         }
         reachable = {rid for rid, root in roots.items() if Path(root.path).is_dir()}
 
+        report(
+            "Plan placements", detail="Computing destinations from catalog decisions"
+        )
         placements = compute_placements(session)
         by_id = {p.file_id: p for p in placements}
         stats.settled = sum(1 for p in placements if p.settled)
@@ -352,6 +355,7 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         candidates: list[Placement] = []
         pending_sources = {_source_of(p).resolve() for p in todo}
         for placement in todo:
+            report("Check placement conflicts", detail=placement.relative_path)
             if placement.file_id in collided:
                 blocked[placement.file_id] = collided[placement.file_id]
                 continue
@@ -442,6 +446,9 @@ def _execute(
                     deferred.append(placement)
                     stats.not_attempted += 1
                     continue
+                progress(
+                    done, _display(placement, labels), stats.errors + stats.blocked
+                )
                 check = check_placement(placement, library, pending_sources)
                 if check.verdict == "defer":
                     deferred.append(placement)

@@ -41,7 +41,7 @@ from ..model import (
 )
 from ..model.core import EntryMetadataBase, FileMetadataBase
 from ..observability import FileTracker, log_call_fields
-from ..progress import track
+from ..progress import report, track
 from ..services.pack_info import pack_views
 
 # A pack's pooled text: its members' samples, documents first, up to this many chars.
@@ -219,6 +219,9 @@ def _run_source(
         return stats
 
     source.begin_run()
+    report(
+        f"Prepare {source.name} enrichment", detail="Finding entries without evidence"
+    )
     everything = _eligible(
         session, source, args.force, getattr(args, "entry_ids", None)
     )
@@ -253,12 +256,18 @@ def _run_source(
     started: set[str] = set()
 
     total = stats.queries if stats.queries is not None else len(contexts)
-    with track(f"enrich {source.name}", total) as progress:
+    with track(
+        f"enrich {source.name}",
+        total,
+        unit="queries" if queries is not None else "entries",
+    ) as progress:
+        done = 0
         for index, context in enumerate(contexts, start=1):
             deadline = getattr(args, "deadline", None)
             if deadline is not None and time.monotonic() >= deadline:
                 stats.stopped_reason = "run deadline"
                 break
+            progress(done, context.relative_path, stats.errors)
             stats.attempted += 1
             try:
                 with FileTracker(

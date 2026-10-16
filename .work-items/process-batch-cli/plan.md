@@ -1,6 +1,6 @@
 # Process-batch CLI implementation plan
 
-Status: complete. Implementation and behavior-level verification are recorded in
+Status: complete (including terminal progress follow-up). Implementation and behavior-level verification are recorded in
 [progress.md](progress.md). This plan implements the
 [accepted workshop idea](idea.md), using the approved
 [quality rubric](intent.md#quality-rubric). The workshop assessments in
@@ -270,3 +270,19 @@ Actual verification, production instruction updates, limitations, and the wrappe
 check notification incident are documented in progress.md. Hard termination of the parent or machine can prevent
 final reporting; durable stage-start records support later diagnosis and recovery,
 not immediate notification in that case.
+
+## Terminal progress follow-up
+
+The owner observed that only stage names were visible during a production run.
+
+- [x] Add a stage-owned structured progress channel and parent terminal rendering,
+  with TTY live display, bounded plain-text updates, elapsed time and wait status.
+- [x] Review all six stages: counts/current file for dedupe/scan/enrichment/moves,
+  current folder and request counts for pack discovery, real catalog decision
+  progress and activity for filing, plus startup/reporting and stage summaries.
+- [x] Preserve private child/agent logs, JSON results, scope, error outcomes,
+  notification policy and owned-process cleanup. Avoid document/model output dumps.
+- [x] Verify real CLI output under PTY and redirection using disposable catalogs,
+  controlled network/agent/SMTP, slow work, errors, no work and interruptions.
+  Run lint/types/format checks. No unit tests or live production run/restart.
+- [x] Document progress behavior and record completion/rubric evidence.

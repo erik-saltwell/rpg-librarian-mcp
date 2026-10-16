@@ -19,6 +19,7 @@ from .inventory import inspect
 from .notifications import notify
 from .processes import execute
 from .records import Run, now, write_json
+from .terminal import LABELS, StageDisplay, final_summary
 
 _STAGES = ("quick-dedupe", "scan", "find-packs", "enrich", "filing", "reorganize")
 
@@ -29,6 +30,7 @@ def stage(run: Run, name: str) -> dict:
     if name in {"quick-dedupe", "scan", "find-packs"}:
         arguments.extend(["--root", run.data["root"]])
     request = run.directory / f"{name}-request.json"
+    progress = run.directory / f"{name}-progress.json"
     write_json(
         request,
         {
@@ -36,6 +38,7 @@ def stage(run: Run, name: str) -> dict:
             "catalog": catalog,
             "arguments": arguments,
             "source": run.data.get("source"),
+            "progress": str(progress),
         },
     )
     record = {"name": name, "outcome": "running", "started_at": now()}
@@ -44,14 +47,18 @@ def stage(run: Run, name: str) -> dict:
     env = os.environ.copy()
     env["RPG_LIBRARIAN_BATCH_RUN_ID"] = run.data["run_id"]
     env["PYTHONFAULTHANDLER"] = "1"
+    env["PYTHONUNBUFFERED"] = "1"
     env.pop("RPG_LIBRARIAN_IMPORT_MANIFEST", None)
-    print(f"{name}...", flush=True)
-    code = execute(
-        [sys.executable, "-m", "rpg_librarian.batch.worker", str(request)],
-        stdout=run.directory / f"{name}-stdout.log",
-        stderr=run.directory / f"{name}-stderr.log",
-        env=env,
-    )
+    with StageDisplay(
+        f"[{_STAGES.index(name) + 1}/6] {LABELS[name]}", progress
+    ) as display:
+        code = execute(
+            [sys.executable, "-m", "rpg_librarian.batch.worker", str(request)],
+            stdout=run.directory / f"{name}-stdout.log",
+            stderr=run.directory / f"{name}-stderr.log",
+            env=env,
+            on_tick=display.tick,
+        )
     record.update(returncode=code, finished_at=now())
     try:
         result = json.loads(
@@ -75,6 +82,7 @@ def stage(run: Run, name: str) -> dict:
         if code < 0:
             record["signal"] = -code
     run.save()
+    display.finish(record)
     return record
 
 
@@ -125,10 +133,20 @@ def _run_batch(
         with lock:
             run.recover_abandoned()
             try:
-                run.data["inventory"] = inspect(catalog, root)
+                with StageDisplay("Inspect inbox") as display:
+                    run.data["inventory"] = inspect(
+                        catalog, root, on_progress=display.update
+                    )
                 inventory = run.data["inventory"]
                 run.data["new_input"] = inventory["new"] + inventory["changed"]
                 run.save()
+                print(
+                    f"Inbox: {inventory['seen']:,} files; {inventory['new']:,} new, "
+                    f"{inventory['changed']:,} changed, "
+                    f"{inventory['retry']:,} retries, "
+                    f"{inventory['unchanged']:,} unchanged.",
+                    flush=True,
+                )
                 if not shutil.which("claude"):
                     raise UsageError("Install and sign in to the Claude CLI first.")
                 for name in _STAGES:
@@ -158,6 +176,7 @@ def _run_batch(
                     if record["outcome"] == "running":
                         record.update(outcome="interrupted", finished_at=now())
                 try:
+                    print("Counting total review backlog...", flush=True)
                     with session_scope(catalog, migrate=False) as session:
                         backlog = collect(session)
                     # Full details remain available through MCP.
@@ -176,6 +195,7 @@ def _run_batch(
                     run.save()
                     delivered = True
                 else:
+                    print("Checking notification rules...", flush=True)
                     delivered = notify(run)
                 if run.data["outcome"] != "interrupted":
                     code = 0 if run.data["outcome"] == "completed" and delivered else 1
@@ -196,9 +216,6 @@ def _run_batch(
             batch_outcome=run.data["outcome"],
             notification=run.data["notification"],
         )
-        print(
-            f"{run.data['outcome']}; email {run.data['notification']['status']}. "
-            f"Run summary: {run.path}",
-            flush=True,
-        )
+        final_summary(run)
+        print(f"Run summary: {run.path}", flush=True)
     return code
