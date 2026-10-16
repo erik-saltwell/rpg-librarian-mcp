@@ -21,6 +21,8 @@ from typing import Any, Protocol
 
 from pebble import ProcessExpired, ProcessPool
 
+from ..observability import enable_fault_diagnostics, fault_log_path
+
 _DEFAULT_TIMEOUT_S = 300.0
 _DEFAULT_MAX_TASKS = 40
 
@@ -65,6 +67,8 @@ class IsolatedWorkerPool:
                 max_workers=1,
                 max_tasks=self._max_tasks,
                 context=get_context("spawn"),
+                initializer=enable_fault_diagnostics,
+                initargs=[fault_log_path()],
             )
         return self._pool
 

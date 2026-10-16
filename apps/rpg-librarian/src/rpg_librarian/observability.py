@@ -11,6 +11,12 @@ The stream sits in a `logs/` directory beside the catalog. A batch verb (`scan`,
    written on failure and on Ctrl-C too, so a run that dies still says how it ended.
    A ``call_started`` with no ``call_finished`` means the process was killed hard.
 
+Files needing work also emit flushed ``file_started`` and ``file_stage_started``
+markers. Join these to the final ``file`` event by ``file_event_id``; an unmatched
+start identifies an interrupted input, not proof that its content is corrupt.
+Every event includes the process ID. Fatal Python stacks append to
+``logs/crash-stderr.log`` for both the main process and isolated workers.
+
 An MCP tool call is a single ``call_finished`` event: a tool call is one operation,
 so it has no start entry and no per-file events.
 
@@ -23,6 +29,8 @@ current file failed in a way that did not raise (scan stores stage errors in the
 
 from __future__ import annotations
 
+import faulthandler
+import os
 import time
 import traceback
 import uuid
@@ -39,6 +47,7 @@ EVENTS_FILENAME = "events.log"
 
 _logger: Any | None = None
 _events_file: IO[str] | None = None
+_fault_file: IO[str] | None = None
 
 # Plain dicts held in context variables, mutated in place: a worker thread that
 # copies the context still shares the dict object, so writes made there show up.
@@ -57,6 +66,28 @@ def logs_dir_for(catalog_path: Path) -> Path:
     return catalog_path.parent / LOGS_DIRNAME
 
 
+def fault_log_path() -> Path | None:
+    return Path(_fault_file.name) if _fault_file is not None else None
+
+
+def enable_fault_diagnostics(path: Path | None) -> None:
+    """Keep the destination open for signal-safe main/worker stack dumps."""
+    global _fault_file
+    if path is None:
+        return
+    destination = path.open("a", encoding="utf-8")
+    previous = _fault_file
+    faulthandler.enable(file=destination, all_threads=True)
+    _fault_file = destination
+    if previous is not None:
+        previous.close()
+    destination.write(
+        f"\nFault handler enabled: pid={os.getpid()} "
+        f"time={datetime.now(UTC).isoformat()}\n"
+    )
+    destination.flush()
+
+
 def configure_wide_event_logs(catalog_path: Path) -> None:
     """Point the event stream at a file beside `catalog_path`. Safe to repeat."""
     global _logger, _events_file
@@ -66,6 +97,7 @@ def configure_wide_event_logs(catalog_path: Path) -> None:
 
     logs_dir = logs_dir_for(catalog_path)
     logs_dir.mkdir(parents=True, exist_ok=True)
+    enable_fault_diagnostics((logs_dir / "crash-stderr.log").resolve())
     _events_file = (logs_dir / EVENTS_FILENAME).open("a", encoding="utf-8")
     _logger = structlog.wrap_logger(
         structlog.PrintLogger(file=_events_file),
@@ -78,7 +110,9 @@ def configure_wide_event_logs(catalog_path: Path) -> None:
 
 def _emit(event: str, **fields: Any) -> None:
     if _logger is not None:
-        _logger.msg(event, **fields)
+        _logger.msg(event, pid=os.getpid(), **fields)
+        if _events_file is not None:
+            _events_file.flush()
 
 
 def log_call_fields(**fields: Any) -> None:
@@ -93,6 +127,13 @@ def log_file_fields(**fields: Any) -> None:
     current = _file_fields.get()
     if current is not None:
         current.update(fields)
+
+
+def log_file_stage(stage: str) -> None:
+    """Flush the active input and operation before entering risky code."""
+    tracker = _current_file.get()
+    if tracker is not None:
+        tracker.stage(stage)
 
 
 def mark_file_error(message: str | None = None) -> None:
@@ -214,6 +255,7 @@ class FileTracker:
 
     def __init__(self, file_id: int | None, path: Path, **fields: Any) -> None:
         self.file_id = file_id
+        self.file_event_id = str(uuid.uuid4())
         self.path = path
         self.fields: dict[str, Any] = dict(fields)
         self.outcome: str | None = None
@@ -229,13 +271,28 @@ class FileTracker:
 
     def __enter__(self) -> FileTracker:
         self._tokens = [_file_fields.set(self.fields), _current_file.set(self)]
+        self.stage("start", event="file_started")
         return self
+
+    def stage(self, stage: str, *, event: str = "file_stage_started") -> None:
+        self.fields["stage"] = stage
+        _emit(
+            event,
+            command=current_command(),
+            call_id=current_call_id(),
+            file_event_id=self.file_event_id,
+            file_id=self.file_id,
+            path=str(self.path),
+            start_time=self._start_time,
+            **self.fields,
+        )
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
         event: dict[str, Any] = {
             "command": current_command(),
             "call_id": current_call_id(),
             "file_id": self.file_id,
+            "file_event_id": self.file_event_id,
             "path": str(self.path),
             "start_time": self._start_time,
             "duration_ms": round((time.perf_counter() - self._start) * 1000, 2),

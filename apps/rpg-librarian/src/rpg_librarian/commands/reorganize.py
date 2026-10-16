@@ -337,7 +337,12 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         placements = compute_placements(session)
         by_id = {p.file_id: p for p in placements}
         stats.settled = sum(1 for p in placements if p.settled)
-        todo = [p for p in placements if not p.settled]
+        scoped_ids = getattr(args, "file_ids", None)
+        todo = [
+            p
+            for p in placements
+            if not p.settled and (scoped_ids is None or p.file_id in scoped_ids)
+        ]
         unreachable = [p for p in todo if p.root_id not in reachable]
         stats.unreachable = len(unreachable)
         todo = [p for p in todo if p.root_id in reachable]
@@ -401,12 +406,24 @@ def _execute(
     # `reorganize` errors are a snapshot of the last run: what is still blocked is
     # re-derived below. Clearing first means a file that has since been fixed, or moved
     # by hand and rescanned, does not keep an error it will never be visited to lose.
-    session.exec(delete(Error).where(col(Error.stage) == ProcessingStage.reorganize))
+    clear = delete(Error).where(col(Error.stage) == ProcessingStage.reorganize)
+    scoped_ids = getattr(args, "file_ids", None)
+    if scoped_ids is not None:
+        clear = clear.where(
+            col(Error.entry_id).in_(
+                {p.entry_id for p in placements if p.file_id in scoped_ids}
+            )
+        )
+    session.exec(clear)
     by_id = {p.file_id: p for p in placements}
     failures = PackFailures()
     for file_id, reason in sorted(blocked.items()):
         _record_blocked(session, by_id[file_id], reason, stats, failures)
-    _store_subpaths(session, placements, candidates)
+    _store_subpaths(
+        session,
+        [p for p in placements if scoped_ids is None or p.file_id in scoped_ids],
+        candidates,
+    )
     session.commit()
 
     boundaries = {Path(root.path) for root in roots.values()}
@@ -465,7 +482,7 @@ def _execute(
     failures.record(session)
     session.commit()
     stats.dirs_removed = _prune_empty_dirs(emptied, boundaries)
-    if args.limit is None:
+    if args.limit is None and scoped_ids is None:
         staging_roots = {
             Path(root.path) for root in roots.values() if root.kind is RootKind.staging
         }

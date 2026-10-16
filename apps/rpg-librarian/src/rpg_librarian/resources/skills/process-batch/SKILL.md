@@ -130,6 +130,9 @@ cannot be identified, defer it with a review flag rather than guessing.
   Google hits on a loose map, token, image, audio, or other non-PDF file come from a
   search for its folder, not for the file.
 - Treat one standalone PDF (a core rulebook or adventure) as its own product.
+- File RPG applications and utilities under `rpg-software`, using the software
+  family or publisher as the product line and the specific application or release
+  as the product. File VTT content packs under `vtt packs`.
 - File travel guidebooks under `travel-guides`, using the publisher or guide series
   (such as `Lonely Planet`) as the product line and the individual book, including
   its edition when known, as the product.

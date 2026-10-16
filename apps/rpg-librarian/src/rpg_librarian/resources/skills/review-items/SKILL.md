@@ -1,13 +1,13 @@
 ---
 name: review-items
-description: Report every catalog item with an open review flag, every file or pack the last `reorganize` could not move (usually a naming conflict), and every folder `find-packs` saw as a pack but left as loose files, with options for resolving each. Use when the user asks to see, list, inspect, or review deferred, needs-review, flagged, blocked, or not-moved RPG-librarian items. Makes no catalog changes unless the user confirms a proposed resolution.
+description: Report every catalog item with an open review flag, every file or pack the last `reorganize` could not move (usually a naming conflict), and every folder `find-packs` saw as a pack but left as loose files, and deferred organization-review recommendations, with options for resolving each. Use when the user asks to see, list, inspect, or review deferred, needs-review, flagged, blocked, or not-moved RPG-librarian items. Makes no catalog changes unless the user confirms a proposed resolution.
 ---
 
 # Review Items
 
 ## Overview
 
-Report three queues from the RPG librarian catalog:
+Report four queues from the RPG librarian catalog:
 
 1. **Review flags**: items with an open `review_flag` row (`resolved_at IS NULL`).
 2. **Blocked by reorganize**: items with an `error` row whose `stage` is
@@ -19,6 +19,10 @@ Report three queues from the RPG librarian catalog:
    form (`folder_judgment.outcome` `mixed`: forming it would lose a decision; `invalid`:
    the answer failed validation; `error`: the search or model call failed and will be
    retried).
+
+4. **Organization recommendations**: deferred `organization_finding` rows from
+   `review-organization`. These are related-group decisions with stable finding IDs;
+   their historical entry IDs may have been replaced by pack membership changes.
 
 Every item ID is an entry ID (`entry.id`), the ID the MCP tools take. An entry is a file
 (`entry.file_id`) or a pack (`entry.pack_id`): a set of files with one collective
@@ -106,7 +110,12 @@ after the user picks an option.
    `stored_path` exactly as returned from the database. Do not infer a filesystem path.
 7. Classify and investigate each blocked file (see **Blocked files** below) and each
    folder left as loose files (see **Folders left as loose files**).
-8. Report (see **Report**).
+8. Call `organization_review_findings(status="deferred")`, following
+   `next_after_id` until `truncated` is false. Keep these group findings distinct
+   from entry IDs. Entry flags with `[organization finding #N]` link to this queue:
+   present the organization proposal once, preserving any unrelated text in the
+   same flag. Use `current_entry_ids`, not historical entry IDs, for inspection.
+9. Report (see **Report**).
 
 ## Blocked files
 
@@ -211,6 +220,30 @@ Then offer the options that fit, recommending one with a short reason:
 Say what you need from the user when the evidence cannot decide, for example which of
 two different files to keep or what to call one.
 
+## Organization recommendations
+
+For each finding, explain its `current`, `proposed`, and `evidence` record, affected
+current entries, and any saved operations. Offer the proposed correction, a concrete
+alternative when supported, or keeping the current organization. Ask the owner to
+choose; do not resolve or apply a recommendation during collection.
+
+After an explicit choice, use `organization_review_resolve` so the decision is stored
+in the database for future review calls:
+
+- `decision="apply"` executes the stored operations.
+- `decision="alternative"` executes the owner's chosen `operations`.
+- `decision="reject"` retains current organization and records the choice.
+
+Include a `note` explaining the owner's decision. For apply/alternative, inspect
+current groups with `organization_review_group` and provide their fingerprints in
+`expected`, including destination context. Reassess stale proposals and ask again if
+the concrete resolution has materially changed. Operations commit atomically with
+the decision. The tool removes only this finding's flag text, preserves other review
+questions, and never moves files. Findings remain available even if their original
+entries became pack members. If there are no executable operations, use alternative
+with the chosen correction. Leaving an item for later makes no change; an explicit
+choice to keep its current organization uses reject so it is remembered.
+
 ## Report
 
 1. **Review flags**: one Markdown table, ordered by item ID, with exactly these columns:
@@ -230,14 +263,18 @@ two different files to keep or what to call one.
    | Root | Folder | Outcome | Reason |
 
    State the total, or say that `find-packs` formed every pack it found.
-4. **Proposed resolutions**: when many conflicts share one cause (such as one product's
+4. **Organization recommendations**: list each finding once with its finding ID,
+   current entries, proposed organization, evidence, and decision needed. State the
+   total or that there are none. Do not repeat its linked entry flags as separate
+   proposals.
+5. **Proposed resolutions**: when many conflicts share one cause (such as one product's
    sub-folders), present them as a single entry with one proposed rule and a few
    example renames rather than one entry each. Otherwise, one numbered entry per
    conflict group, giving the files
    involved, what the comparison showed, the options with the recommended one first,
    and any question for the user. List stale-scan files together with the instruction
    to run `scan`.
-5. Ask the user which options to apply. After applying confirmed choices, report what
+6. Ask the user which options to apply. After applying confirmed choices, report what
    changed and tell the user to run `rpg-librarian reorganize --dry-run`. Resolved
    files stay in the blocked queue until the next `reorganize` run replaces it.
 
@@ -245,7 +282,7 @@ two different files to keep or what to call one.
 
 - Change the catalog only after the user confirms a specific option, and only with
   `update_product`, `rename-file`, `create-pack`, `add-to-pack`, or
-  `remove-from-pack`. Never call `scan`, `find-packs`, `enrich`, or `reorganize`.
+  `remove-from-pack`, or `organization_review_resolve` for organization findings. Never call `scan`, `find-packs`, `enrich`, or `reorganize`.
 - Never query `file_text.sample_pages`.
 - Do not include resolved review flags, automatic duplicates, or unflagged unfiled files.
 - Keep review reasons and error text verbatim apart from removing the exception name

@@ -1,5 +1,56 @@
 # Progress
 
+## Phase 6 completion (2026-10-10)
+
+The user explicitly requested removal of the remaining v1 package and a current
+root README. That cleanup is now complete; the historical closure and implementation
+notes below are preserved.
+
+- Removed `packages/rpg-librarian-mcp/`, including its own tests, and its root
+  ruff/ty/pytest paths. The current app and shared tools remain.
+- Removed the v1-dependent `migrate_legacy_catalog.py` and
+  `fix_oversized_page_image_only.py` scripts, plus the obsolete local
+  `fix-test-issues` skill that referenced deleted v1 tools/tests.
+- Regenerated uv.lock and synced the workspace. The old editable package,
+  pypdfium2 and scipy were removed from the resolved/installed workspace.
+- Rewrote the root README for the current CLI/MCP app, catalog path precedence,
+  initialization, processing, credentials, maintenance and development checks.
+  Updated .env.example and VS Code launch configurations to match. The active app
+  README and pre-existing product-type/skill edits were preserved. Agent instruction
+  files already contained current workflow pointers and needed no changes.
+
+Verification performed:
+
+- `uv lock` and `uv sync --all-packages`: passed.
+- `uv run ruff check`, `uv run ruff format --check`, and `uv run ty check`: passed.
+- `uv run pytest`: 3 remaining tools-package tests passed. The current app has no
+  collected tests; no tests were added or expanded.
+- `uv run python scripts/check_migrations.py`: all app migrations applied to a
+  temporary database and Alembic reported no schema drift.
+- `uv build --package rpg-librarian --out-dir /tmp/rpg-librarian-v1-removal-build`:
+  app source distribution and wheel built successfully.
+- CLI help and direct imports: current app/tools import; the deleted v1 module is
+  absent from the synced environment.
+- Scratch library with one empty text file in nested source folders: `init`,
+  `add-source`, `scan`, `find-packs --no-search`, `enrich --source text_analysis`,
+  `list-unfiled`, `update-product`, and `reorganize --dry-run`/`reorganize` passed.
+  Preview retained the source; apply moved it to the expected product-line path;
+  the second apply was a no-op. No errors remained in the scratch catalog.
+- A real stdio FastMCP client launched `rpg-librarian serve`, listed 15 tools, and
+  called `list_unfiled` successfully against that scratch catalog.
+- Validated the five explicit current-app debugger command argument lists against
+  the app parser, root README local links, workspace lockfile, and removal of live
+  v1 module references. The tools boundary test intentionally still names the
+  prohibited old module. Historical planning documents retain historical names.
+- `git diff --check` and final work-item/index/document-link consistency checks:
+  passed.
+
+Limitations: the scratch input deliberately required no remote lookup/model call.
+This cleanup did not repeat live enrichment, an agent filing session, OCR/video
+extraction, or real SMB checks, and did not change production catalogs, installed
+library instructions, hosting or scheduling. Earlier verification notes are not
+new evidence for this cleanup.
+
 ## Closure (2026-10-08)
 
 Status: `complete`, at the user's explicit direction. No additional implementation

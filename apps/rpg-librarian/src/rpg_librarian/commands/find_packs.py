@@ -28,6 +28,7 @@ caps the model calls. `--no-search` skips the searches.
 from __future__ import annotations
 
 import argparse
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -95,6 +96,9 @@ class Stats:
 class Finder:
     def __init__(self, session: Session, args: argparse.Namespace) -> None:
         self.session = session
+        self.folder: str | None = getattr(args, "folder", None)
+        self.deadline: float | None = getattr(args, "deadline", None)
+        self.file_ids: list[int] | None = getattr(args, "file_ids", None)
         self.limit: int | None = args.limit
         self.dry_run: bool = args.dry_run
         self.stats = Stats()
@@ -116,7 +120,22 @@ class Finder:
         self.labels = {r.id: r.label or Path(r.path).name for r in roots if r.id}
         root_ids = list(self.labels)
         files = list(
-            self.session.exec(select(File).where(col(File.root_id).in_(root_ids))).all()
+            self.session.exec(
+                select(File)
+                .where(col(File.root_id).in_(root_ids))
+                .where(
+                    col(File.relative_path).startswith(
+                        self.folder + "/", autoescape=True
+                    )
+                    if self.folder and self.file_ids is None
+                    else True
+                )
+                .where(
+                    col(File.id).in_(self.file_ids)
+                    if self.file_ids is not None
+                    else True
+                )
+            ).all()
         )
         self.decisions = {
             file_id: product_id
@@ -212,6 +231,8 @@ class Finder:
         batch: list[FolderNode],
         queue: deque[tuple[FolderNode, list[FolderNode]]],
     ) -> None:
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            self.stats.stopped = "run deadline"
         if self.stats.stopped or (
             self.limit is not None and self.stats.calls >= self.limit
         ):

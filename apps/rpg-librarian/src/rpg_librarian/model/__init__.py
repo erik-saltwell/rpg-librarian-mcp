@@ -19,6 +19,11 @@ from .ImageMetadata import ImageMetadata
 from .IsbnResult import IsbnResult
 from .LengthUnit import LengthUnit
 from .MeshMetadata import MeshMetadata
+from .OrganizationReview import (
+    OrganizationCoverage,
+    OrganizationFinding,
+    OrganizationRun,
+)
 from .Pack import Pack
 from .PackFormation import PackFormation
 from .PdfMetadata import PdfMetadata
@@ -56,6 +61,9 @@ __all__ = [
     "IsbnResult",
     "LengthUnit",
     "MeshMetadata",
+    "OrganizationCoverage",
+    "OrganizationFinding",
+    "OrganizationRun",
     "Pack",
     "PackFormation",
     "PdfMetadata",

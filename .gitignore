@@ -36,3 +36,9 @@ catalog.db
 
 # Local manual-testing workspace for the rpg-librarian app
 .test/
+
+# Private importer journals/context if the working catalog is in this checkout.
+/imports/
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm

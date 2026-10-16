@@ -13,10 +13,8 @@ dev = [
 [tool.ruff]
 line-length = 88
 src = [
-    "packages/rpg-librarian-mcp/src",
     "packages/rpg-librarian-tools/src",
     "apps/rpg-librarian/src",
-    "packages/rpg-librarian-mcp/tests",
     "packages/rpg-librarian-tools/tests",
     "apps/rpg-librarian/tests",
 ]
@@ -34,17 +32,14 @@ select = [
 
 [tool.ty.environment]
 root = [
-    "./packages/rpg-librarian-mcp/src",
     "./packages/rpg-librarian-tools/src",
     "./apps/rpg-librarian/src",
-    "./packages/rpg-librarian-mcp/tests",
     "./packages/rpg-librarian-tools/tests",
     "./apps/rpg-librarian/tests",
 ]
 
 [tool.pytest.ini_options]
 testpaths = [
-    "packages/rpg-librarian-mcp/tests",
     "packages/rpg-librarian-tools/tests",
     "apps/rpg-librarian/tests",
 ]

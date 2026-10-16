@@ -22,7 +22,7 @@ Validation is separate and independent:
 `~/data/rpg_test_tools/pack_migration_validate.py`.
 See `.work-items/pack-migration/` for the process.
 
-Usage (with the rpg-librarian-mcp environment):
+Usage (with the rpg-librarian app environment):
 
     uv run --project ~/proj/rpg-librarian-mcp/apps/rpg-librarian python \\
         ~/proj/rpg-librarian-mcp/scripts/migrate_packs.py upgrade --catalog COPY.db

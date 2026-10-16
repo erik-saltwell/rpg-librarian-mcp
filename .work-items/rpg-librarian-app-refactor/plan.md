@@ -275,16 +275,21 @@ it is flagged, not moved.
 
 ## Phase 6: remove v1 and finish
 
-- [ ] Delete `packages/rpg-librarian-mcp/` and its entries from the root
+- [x] Delete `packages/rpg-librarian-mcp/` and its entries from the root
       `pyproject.toml` (ruff `src`, ty root, pytest testpaths); delete
       `scripts/migrate_legacy_catalog.py` and `scripts/fix_oversized_page_image_only.py`
       if they import v1; `uv lock`.
-- [ ] Update `README.md`, `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` references to the
+- [x] Update `README.md`, `CLAUDE.md` / `AGENTS.md` / `GEMINI.md` references to the
       new app and verbs; note that the library `CLAUDE.md` replacement is deferred.
-- [ ] Record verification outcomes and limitations in `progress.md`; mark the item
+- [x] Record verification outcomes and limitations in `progress.md`; mark the item
       complete.
 
 Depends on: Phases 0–5 verified. Outcome: one app, no v1 code, hooks green.
+
+Completed on 2026-10-10 under the user's explicit cleanup request. Actual checks
+and remaining live-verification limitations are recorded at the top of progress.md.
+The agent instruction files already contained only current workflow pointers;
+initialized libraries' local instructions/skills were not rewritten.
 
 Verification: `uv sync`, `uv run ruff check`, `uv run ty check`, `uv run pytest`
 (tools tests only), `uv run python scripts/check_migrations.py`, one full end-to-end

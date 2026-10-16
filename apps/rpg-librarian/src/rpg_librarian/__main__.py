@@ -10,6 +10,7 @@ from .commands import (
     clean,
     enrich,
     find_packs,
+    imports,
     init,
     quick_dedupe,
     reorganize,
@@ -27,6 +28,11 @@ from .observability import CallTracker, configure_wide_event_logs
 Handler = Callable[[argparse.Namespace, Path], int]
 
 _VERBS = {
+    "import-source": "Register, authorize or check the Brendan OneDrive source.",
+    "import-run": "Resume a bounded folder-complete Brendan import.",
+    "import-status": "Show import progress, unfinished folders and reviews.",
+    "import-reviews": "Export unresolved importer reviews as JSON.",
+    "import-review": "Resolve an importer-level review.",
     "init": "Create the catalog and register the library root.",
     "add-source": "Register a staging root (a dump folder).",
     "scan": "Walk roots and record files, hashes, and metadata.",
@@ -61,6 +67,11 @@ def _not_implemented(args: argparse.Namespace, catalog_path: Path) -> int:
 
 
 _HANDLERS: dict[str, Handler] = {
+    "import-source": imports.source,
+    "import-run": imports.run,
+    "import-status": imports.status,
+    "import-reviews": imports.reviews,
+    "import-review": imports.resolve,
     "init": init.run,
     "add-source": add_source.run,
     "scan": scan.run,
@@ -105,6 +116,46 @@ def build_parser() -> argparse.ArgumentParser:
         name: subparsers.add_parser(name, help=help_text, parents=[common])
         for name, help_text in _VERBS.items()
     }
+    source = verbs["import-source"]
+    source.add_argument("action", choices=["add", "auth", "doctor"])
+    source.add_argument("name", choices=["brendan"])
+    source.add_argument("--inbox", type=Path)
+    for name in ("import-run", "import-status", "import-reviews"):
+        verbs[name].add_argument("name", choices=["brendan"])
+    verbs["import-reviews"].add_argument("--out", type=Path)
+    review = verbs["import-review"]
+    review.add_argument("action", choices=["resolve"])
+    review.add_argument("subject")
+    importer = verbs["import-run"]
+    importer.add_argument(
+        "--inbox",
+        type=Path,
+        help="On first run, a subdirectory of an existing staging root.",
+    )
+    importer.add_argument(
+        "--folder", help="Select one top-level source folder (all missing descendants)."
+    )
+    importer.add_argument("--max-files", type=int, default=100)
+    importer.add_argument("--max-bytes", type=int, default=5 * 1024**3)
+    importer.add_argument("--max-seconds", type=int, default=7200)
+    importer.add_argument("--max-entries", type=int, default=50)
+    importer.add_argument(
+        "--allow-oversized",
+        action="store_true",
+        help="Allow a single first transfer larger than the byte budget.",
+    )
+    importer.add_argument("--discover-only", action="store_true")
+    importer.add_argument("--process-only", action="store_true")
+    importer.add_argument(
+        "--no-process",
+        action="store_true",
+        help="Copy only; completed folders remain ready for processing.",
+    )
+    importer.add_argument(
+        "--no-email",
+        action="store_true",
+        help="Retain reviews without sending their digest yet.",
+    )
     verbs["init"].add_argument(
         "--library", type=Path, required=True, help="The library root directory."
     )

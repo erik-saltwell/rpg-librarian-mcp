@@ -42,6 +42,12 @@ packs, sound effects) is its own product under a functional type, not under a ga
 When you cannot tell, defer with update_product's review_flag rather than guessing.
 Evidence (search results, ISBN records, the system guess) is a hint; the folder path
 is often the best clue.
+
+For a review of existing organization, use the review-organization skill and the
+organization_review_* tools. These explicitly expose stable file IDs, finding IDs,
+and run IDs in addition to entry IDs. They retain coverage and owner decisions in
+the database and apply a whole group's catalog correction atomically. Judgment
+calls go to review-items; physical placement remains the separate reorganize command.
 """
 
 
@@ -63,6 +69,9 @@ def create_server(catalog_path: Path) -> FastMCP:
 
     mcp = FastMCP(name="rpg-librarian", instructions=INSTRUCTIONS)
     mcp.add_middleware(ToolCallLoggingMiddleware())
+    from ..imports.scope import install
+
+    install(mcp, catalog_path)
     register_tools(mcp, catalog_path)
     log.info("catalog %s", catalog_path)
     return mcp

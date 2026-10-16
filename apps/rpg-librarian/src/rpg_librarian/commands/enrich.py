@@ -13,6 +13,7 @@ Evidence is candidate signal for the LLM session, never an asserted identificati
 from __future__ import annotations
 
 import argparse
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -60,7 +61,9 @@ class SourceStats:
     stopped_reason: str | None = None
 
 
-def _eligible(session: Session, source: Source, force: bool) -> list[FileContext]:
+def _eligible(
+    session: Session, source: Source, force: bool, entry_ids: list[int] | None = None
+) -> list[FileContext]:
     """Files a source has not yet covered, as contexts, in catalog order."""
     roots = {r.id: r.path for r in session.exec(select(Root)).all()}
     statement = (
@@ -72,6 +75,8 @@ def _eligible(session: Session, source: Source, force: bool) -> list[FileContext
         .where(col(File.disposition) != Disposition.duplicate)
         .order_by(col(File.id))
     )
+    if entry_ids is not None:
+        statement = statement.where(col(Entry.id).in_(entry_ids))
     if not force:
         table = source.table
         if issubclass(table, EntryMetadataBase):
@@ -97,12 +102,16 @@ def _eligible(session: Session, source: Source, force: bool) -> list[FileContext
             )
         )
     if issubclass(source.table, EntryMetadataBase):
-        contexts += _pack_contexts(session, source, force, roots)
+        contexts += _pack_contexts(session, source, force, roots, entry_ids)
     return contexts
 
 
 def _pack_contexts(
-    session: Session, source: Source, force: bool, roots: dict[int | None, str]
+    session: Session,
+    source: Source,
+    force: bool,
+    roots: dict[int | None, str],
+    entry_ids: list[int] | None = None,
 ) -> list[FileContext]:
     """Packs a source has not yet covered, as contexts, in entry order."""
     table = source.table
@@ -112,6 +121,8 @@ def _pack_contexts(
         .join(Entry, col(Entry.pack_id) == col(Pack.id))
         .order_by(col(Entry.id))
     )
+    if entry_ids is not None:
+        statement = statement.where(col(Entry.id).in_(entry_ids))
     if not force:
         statement = statement.where(
             ~exists().where(col(table.entry_id) == col(Entry.id))
@@ -208,7 +219,17 @@ def _run_source(
         return stats
 
     source.begin_run()
-    everything = _eligible(session, source, args.force)
+    everything = _eligible(
+        session, source, args.force, getattr(args, "entry_ids", None)
+    )
+    context_prefix = getattr(args, "context_prefix", None)
+    if context_prefix:
+        from dataclasses import replace
+
+        everything = [
+            replace(c, relative_path=c.relative_path.removeprefix(context_prefix + "/"))
+            for c in everything
+        ]
     contexts = [c for c in everything if source.wants(c)]
     if args.force:
         # A source's rules can change. Rows it holds for files it no longer wants
@@ -234,6 +255,10 @@ def _run_source(
     total = stats.queries if stats.queries is not None else len(contexts)
     with track(f"enrich {source.name}", total) as progress:
         for index, context in enumerate(contexts, start=1):
+            deadline = getattr(args, "deadline", None)
+            if deadline is not None and time.monotonic() >= deadline:
+                stats.stopped_reason = "run deadline"
+                break
             stats.attempted += 1
             try:
                 with FileTracker(

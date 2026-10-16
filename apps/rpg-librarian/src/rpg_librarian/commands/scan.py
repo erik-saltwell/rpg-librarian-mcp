@@ -78,6 +78,7 @@ from ..observability import (
     log_call_fields,
     log_file_fields,
     log_file_skipped,
+    log_file_stage,
     mark_file_error,
 )
 from ..paths import TRASH_DIRNAME
@@ -182,7 +183,9 @@ class Scanner:
             self.stats.missing += 1
         self.session.commit()
 
-    def process_root(self, root: Root, candidates: list[str]) -> None:
+    def process_root(
+        self, root: Root, candidates: list[str], *, complete: bool = True
+    ) -> None:
         base = Path(root.path)
         with (
             tempfile.TemporaryDirectory(prefix="rpg-librarian-scan-") as tmp,
@@ -192,9 +195,10 @@ class Scanner:
                 self._scan_one(root, base, relative, Path(tmp))
                 self.session.commit()  # one file, one transaction
                 progress(index, relative, self.stats.errored)
-        root.last_scanned_at = datetime.now(UTC)
-        self.session.add(root)
-        self.session.commit()
+        if complete:
+            root.last_scanned_at = datetime.now(UTC)
+            self.session.add(root)
+            self.session.commit()
 
     # -- one file ------------------------------------------------------------
 
@@ -269,7 +273,9 @@ class Scanner:
         self._local_copy, self._share_path = str(local), str(path)
         try:
             try:
+                log_file_stage("copy")
                 shutil.copyfile(path, local)
+                log_file_stage("inspect")
                 inspection = inspect_file(local)
             except Exception as error:
                 file = existing or self._new_row(root, relative, size, mtime)
@@ -310,11 +316,13 @@ class Scanner:
             self._clear_errors(file)
             self._clear_scan_rows(file)
             self._extract(file, local, inspection.media_type)
+            log_file_stage("duplicates")
             self._join_duplicates(file)
             if is_new:
                 self._auto_join(file)
             return file
         finally:
+            log_file_stage("cleanup")
             local.unlink(missing_ok=True)
 
     def _new_row(self, root: Root, relative: str, size: int, mtime: int) -> File:
@@ -358,10 +366,13 @@ class Scanner:
     def _extract(self, file: File, local: Path, media_type: MediaType) -> None:
         assert file.id is not None
         try:
+            log_file_stage("metadata_open")
             extractor = generate_extractor(media_type, local, self.pool)
+            log_file_stage("metadata_embedded")
             embedded = extractor.extract_file_metadata()
             embedded.file_id = file.id
             self.session.merge(embedded)
+            log_file_stage("metadata_custom")
             custom = extractor.extract_custom_metadata()
             if custom is not None:
                 custom.file_id = file.id
@@ -375,6 +386,7 @@ class Scanner:
             if media_type is MediaType.pdf:
                 self._extract_pdf_text(file, local)
             elif media_type is MediaType.text:
+                log_file_stage("text")
                 self._extract_plain_text(file, local)
         except Exception as error:
             self._record_error(file, ProcessingStage.text, error)
@@ -400,6 +412,7 @@ class Scanner:
 
     def _extract_pdf_text(self, file: File, local: Path) -> None:
         assert file.id is not None
+        log_file_stage("pdf_open")
         doc = fitz.open(local)
         try:
             if doc.needs_pass or doc.page_count == 0:
@@ -408,8 +421,10 @@ class Scanner:
         finally:
             doc.close()
 
+        log_file_stage("barcodes")
         barcodes = self.pool.submit(scan_identifiers, local, _barcode_pages(page_count))
         barcode = barcodes[0] if barcodes else None
+        log_file_stage("text")
         extraction = self.pool.submit(extract_text, local, _text_pages(page_count))
         pages = {str(page.page + 1): page.text for page in extraction.pages}
         log_file_fields(

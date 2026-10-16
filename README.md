@@ -1,219 +1,218 @@
 # RPG Librarian
 
-Monorepo for cataloging and organizing a digital RPG archive.
+Catalog and organize a digital RPG library from PDFs, maps, tokens, audio, models,
+and other files. The current application is `rpg-librarian`: a CLI for bulk
+processing and a FastMCP stdio server for agent-assisted filing.
 
-## Layout
+The SQLite catalog records files, hashes, metadata, identification evidence,
+products, packs, filing decisions, errors, and review flags. Filesystem organization
+is applied separately by `reorganize`.
 
-```text
-packages/
-  rpg-librarian-mcp/
-    src/rpg_librarian_mcp/   MCP handlers, commands, persistence, and workflows
-    tests/
-  rpg-librarian-tools/
-    src/rpg_librarian_tools/ stateless file operations and service clients
-    tests/
-scripts/
+## Repository layout
+
+- [apps/rpg-librarian/](apps/rpg-librarian/): the application, catalog, CLI,
+  MCP tools, migrations, and bundled agent skills.
+- [packages/rpg-librarian-tools/](packages/rpg-librarian-tools/): stateless file,
+  PDF, identifier, and external-service operations used by the application.
+- `scripts/`: migration checks, pack migration, and a local batch-processing helper.
+- [WORK-ITEMS.md](WORK-ITEMS.md): tracked project work.
+
+The tools package accepts explicit inputs and credentials and does not own catalog
+state. Application orchestration belongs in `apps/rpg-librarian`.
+
+## Install from a checkout
+
+Use Python 3.14 or newer and [uv](https://docs.astral.sh/uv/). From the repository root:
+
+```bash
+uv sync --all-packages
+cp .env.example .env
+uv run rpg-librarian --help
 ```
 
-`rpg-librarian-mcp` owns orchestration: MCP protocol handling, catalog/database
-state, worker lifecycle, and multi-step workflows. `rpg-librarian-tools` owns
-atomic operations with explicit inputs and plain outputs: PDF text/OCR and
-barcode extraction, ISBN/ISSN parsing, media detection, hashing and filesystem
-walking, plus thin DriveThruRPG and RPGGeek clients. The tools package never
-imports the MCP application.
+For file-type detection, install the system `libmagic` library. OCR of scanned PDFs
+requires the Tesseract executable on `PATH`; video metadata extraction requires
+MediaInfo. These system dependencies are separate from the Python dependencies.
 
-Adding a tool group: create `mcp/<name>.py` with
-`def register(mcp: FastMCP, catalog: Catalog) -> None:` that declares `@mcp.tool`
-functions, then add `<name>.register` to `REGISTRARS`.
+For example, on Debian or Ubuntu:
 
-## Installation
+```bash
+sudo apt install libmagic1 tesseract-ocr libmediainfo0v5
+```
 
-pipx install rpg-librarian-mcp
+## Configure the catalog and services
 
-Copy `.env.example` to `.env` in your library root and adjust as needed — see
-"Running" below for how it's discovered.
+Catalog path precedence is `--catalog PATH`, then `RPG_LIBRARIAN_CATALOG`, then
+`./catalog.db`. The library location is registered by `init --library PATH`;
+it does not depend on the server's working directory.
 
-### Database setup
+The application loads `.env` using python-dotenv's upward discovery, and existing
+environment variables win. In a source checkout, put `.env` at the repository root.
+For scheduled or installed deployments, exporting the required variables avoids
+depending on where dotenv discovery starts.
 
-The catalog's SQLite database (`<library root>/.catalog/catalog.db`) is
-created automatically, migrated up to `head`, the first time the server runs
-against a library that doesn't have one yet. No manual step needed for a
-fresh install — `alembic.ini` and the migration scripts are bundled inside
-the installed package, so this works the same whether you're running from a
-source checkout or a `pipx`/PyPI install.
+See [.env.example](.env.example) for:
 
-This only handles *creation*. If a future release adds a new migration, an
-already-existing catalog is **not** auto-upgraded — bring it to `head`
-yourself, from inside the library directory:
+- `RPG_LIBRARIAN_CATALOG`: the catalog database path.
+- `DTRPG_API_KEY`: DriveThruRPG enrichment.
+- `RPGGEEK_BEARER_TOKEN`: RPGGeek enrichment through the BoardGameGeek XML API.
+- `SERPER_API_KEY`: Google search evidence through Serper.dev.
+- `GOOGLE_BOOKS_API_KEY`: optional Google Books lookup before Open Library/Wikidata.
+- `RPG_LIBRARIAN_LLM_MODEL`: LiteLLM model for text analysis and pack discovery
+  (current default: `gpt-5.6-luna`), with the corresponding provider credentials.
 
-rpg-librarian-mcp --migrate
+Missing keys skip the relevant credential-dependent enrichment sources. Pack
+discovery and nonempty text analysis need a working model/provider configuration.
+Basic catalog creation, scanning, filing tools, and placement do not require an LLM.
 
-This works the same way regardless of install method (source checkout,
-`pipx`, PyPI) since it locates the bundled migrations the same way the
-auto-create path does. It's a safe no-op if the catalog is already at head,
-and exits with a clear error (instead of starting the server) if there's no
-catalog at this location yet.
+## Initialize and process content
 
-The same first-time bootstrap also seeds a starter `CLAUDE.md` in the
-library root, from a packaged default (`resources/CLAUDE.md`), if one isn't
-already there. An existing `CLAUDE.md` is never overwritten, and this only
-happens at the moment `.catalog` is first created — not on every run.
+Create the library and inbox directories first. Registered roots must be separate:
+an inbox cannot be inside a registered library root, and roots cannot overlap.
+Keep the catalog outside content roots when practical.
 
-### `read_pdfs`: Tesseract OCR
+From the repository checkout, substituting your actual paths:
 
-`read_pdfs` OCRs scanned PDF pages via `pytesseract`, which wraps the
-Tesseract OCR **system binary** — this is not installed by `pip`/`uv sync`,
-you need it on `PATH` separately:
+```bash
+export RPG_LIBRARIAN_CATALOG=/path/to/catalog.db
 
-- Debian/Ubuntu: `sudo apt install tesseract-ocr`
-- macOS (Homebrew): `brew install tesseract`
-- Windows: install from the
-  [Tesseract at UB Mannheim](https://github.com/UB-Mannheim/tesseract/wiki)
-  builds and ensure `tesseract.exe` is on `PATH`.
+uv run rpg-librarian init --library /path/to/library
+uv run rpg-librarian add-source /path/to/inbox --label inbox
+uv run rpg-librarian scan --root /path/to/inbox
+uv run rpg-librarian find-packs --root /path/to/inbox
+uv run rpg-librarian enrich
+```
 
-If the binary is missing, `read_pdfs` fails immediately (before scanning any
-files) with a clear error, rather than failing once per scanned PDF.
+`init` creates/migrates the catalog, seeds product types, registers the library,
+and installs the bundled `process-batch`, `review-items`, and `review-organization` skills into the
+library's `.claude/skills/`, `.codex/skills/`, and `.gemini/skills/` directories.
+Existing local skill copies are preserved.
 
-### `read_pdfs`: LLM provider credentials
+`scan` hashes and extracts metadata/text, skips unchanged files, records individual
+errors, and recognizes exact duplicates and moved files. `find-packs` identifies
+collective products such as map/token sets. `enrich` gathers cached identification
+evidence; it operates across the catalog, not just the last scanned root.
 
-`read_pdfs` also asks an LLM (via `litellm`) to summarize a PDF's
-description and guess its RPG system from sampled page text. The **model
-choice** is checked into the repo (`resources/llm_settings.yaml`), but the
-**provider credentials** are not — set whichever API key your chosen model's
-provider needs (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) in your `.env`,
-following `litellm`'s own
-[provider docs](https://docs.litellm.ai/docs/providers) for the exact
-variable name. See `.env.example`.
+Use `review-organization` to audit existing product, line, and pack relationships:
+clear-cut catalog corrections apply automatically, judgment calls go to
+`review-items`, and database-backed coverage resumes across invocations. Physical
+moves remain the separate `reorganize` command. See the
+[organization review workflow](apps/rpg-librarian/README.md#reviewing-library-organization).
 
-### `search_rpg_geek` / `lookup_rpg_geek_product`: RPGGeek credentials
+Next, use the `process-batch` skill with the MCP tools to judge and file the
+unfiled entries. It works by folder and uses filenames, folder context, extracted
+metadata, and evidence. Uncertain filing can be deferred with a review flag.
+Then preview and apply placement:
 
-These call the [RPGGeek](https://rpggeek.com) XML API. Basic search/lookup
-works unauthenticated — `RPGGEEK_BEARER_TOKEN` in your `.env` is optional,
-only needed to raise RPGGeek's rate limits. See `.env.example`.
+```bash
+uv run rpg-librarian reorganize --dry-run
+uv run rpg-librarian reorganize
+```
 
-### `search_dtrpg`: DriveThruRPG credentials
+Kept content is placed under `<library>/<type>/<line>/[<product>/]<file>`, with
+product subfolders preserved where applicable. Duplicates, superseded content,
+and discarded content go under `<library>/.trash/`. Placement refuses overwrites
+and files changed since scanning.
 
-This calls the DriveThruRPG vBeta API and **requires** `DTRPG_API_KEY` in
-your `.env` — an application key from your DriveThruRPG account. Without
-it, this tool fails with a clear error on first use; the rest of the
-server is unaffected. See `.env.example`.
+The [application README](apps/rpg-librarian/README.md) documents packs, product types,
+filename policy, detailed processing behavior, and review tools.
+`scripts/process-batch.zsh` is a local convenience script with fixed inbox paths
+and an interactive review step; adapt it before using it elsewhere.
 
-### `lookup_isbn`: Google Books credentials (optional)
+## Run the MCP server
 
-`lookup_isbn` falls back Google Books → Open Library → Wikidata. It works
-with no configuration — Open Library and Wikidata need no key — but
-`GOOGLE_BOOKS_API_KEY` in your `.env` is recommended: it gets a much
-higher quota than Google Books' anonymous access, and Google Books is the
-only one of the three that returns a description in the same response.
-See `.env.example`.
+For a client that launches stdio MCP servers:
 
-### Recommended companion: Open Library MCP server
+```bash
+uv run --project /absolute/path/to/this/repo \
+  rpg-librarian serve --catalog /absolute/path/to/catalog.db
+```
 
-[`openlibrary-mcp-server`](https://github.com/cyanheads/openlibrary-mcp-server)
-gives the model direct access to the Open Library API — searching books and
-authors, fetching editions, browsing subjects, and resolving cover images —
-which is useful alongside `rpg-librarian-mcp` for identifying and enriching
-cataloged products. It requires no API key.
-
-Install and register it with Claude Code:
-
-    claude mcp add openlibrary-mcp-server -- npx -y @cyanheads/openlibrary-mcp-server@latest
-
-Or add it directly to `claude_desktop_config.json`:
+Example client configuration:
 
 ```json
 {
   "mcpServers": {
-    "openlibrary-mcp-server": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@cyanheads/openlibrary-mcp-server@latest"]
+    "rpg-librarian": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "/absolute/path/to/this/repo",
+        "rpg-librarian",
+        "serve",
+        "--catalog",
+        "/absolute/path/to/catalog.db"
+      ]
     }
   }
 }
 ```
 
-## Running
+Tools include the unfiled worklist, product type/line lookups, entry/product/pack
+reports, read-only SQL, filing decisions, review flags, error clearing, pack
+membership, and file renaming. Filing and reporting operations also have CLI
+commands; see `uv run rpg-librarian --help`.
 
-rpg-librarian-mcp
+## Import from Brendan
 
-Register with Claude Code:
+The app can import missing content from Brendan's shared personal OneDrive in
+bounded manual runs. It keeps his folder structure, finishes all missing files
+from a selected top-level folder before pack discovery, saves progress between
+runs, and emails only newly actionable reviews. It uses the configured `.env`
+for OneDrive and Gmail, plus the existing private Microsoft token cache.
 
-claude mcp add rpg-librarian -- rpg-librarian-mcp
+```bash
+uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --inbox /path/to/inbox/brendan
+uv run rpg-librarian import-status brendan --catalog /path/to/catalog.db
+```
 
-The library root is the working directory the server is launched from, and
-the catalog is always `<library root>/.catalog` — neither is configurable.
-Other config comes from the environment, with a `.env` found upward from
-that directory loaded at startup. See `.env.example`.
+Repeat `import-run` to continue. The inbox must be inside an existing staging
+root. No nightly schedule is installed. See the [importer instructions](apps/rpg-librarian/README.md#brendan-onedrive-importer)
+for folder selection, limits, discovery-only runs, reviews and recovery.
 
-## Development
+## Cleanup and maintenance
 
-Clone and install with dev dependencies:
+For a fresh, uncataloged inbox containing many known exact copies, optionally run
+`quick-dedupe --root PATH --dry-run`, then `quick-dedupe --root PATH` before scanning.
+It moves confirmed duplicates to trash without extracting survivors. It refuses
+an inbox containing ordinary cataloged files; use normal scanning for those.
 
-git clone <repo-url>
-cd rpg-librarian-mcp
-uv sync
+`clean --dry-run` previews removal of duplicate, superseded, and discarded trash.
+`clean` permanently deletes that trash and compacts SQLite. It also removes the
+corresponding catalog records and hashes. See the application README before using it.
 
-Run the server from a checkout with `uv run rpg-librarian-mcp`.
+`sanitize-filenames` previews filename cleanup; `--apply` performs it with a
+catalog backup and a durable rename journal.
 
-### Setting up your dev environment
+Normal catalog sessions migrate an existing database to the current schema;
+`init` creates a new one. There is no separate `--migrate` server option.
+For migration development, the bundled Alembic configuration is at
+`apps/rpg-librarian/src/rpg_librarian/alembic/alembic.ini`.
+`DATABASE_URL` supplies the target for a direct Alembic invocation; application
+commands use their explicit catalog path instead.
 
-Copy `.env.example` to `.env` at the repo root (or wherever you're running
-`alembic` from) and set `DATABASE_URL` to point at the SQLite db you want
-`alembic` commands to target, e.g. a test library's catalog:
+Runs append structured JSON events to `logs/events.log` beside the catalog,
+with call identifiers, item outcomes, and run totals.
 
-DATABASE_URL=sqlite:////home/you/data/rpgtest/.catalog/catalog.db
+## Development checks
 
-`migrations/env.py` loads `.env` automatically (`load_env()` searches upward
-from the installed package's own location, not from the library root you
-launched the server in -- so this `.env` is found and read no matter which
-library the server is actually pointed at) before reading `DATABASE_URL` --
-no need to `source` or export it yourself.
-
-`DATABASE_URL` only takes effect when `sqlalchemy.url` hasn't already been
-set to something real: `alembic.ini`'s checked-in `sqlalchemy.url` is a
-placeholder, so a bare `alembic ...` CLI invocation (no other target
-configured) falls back to `DATABASE_URL`. The server's own bootstrap path
-(`db.py`) always sets its target explicitly, to the current library root's
-own `.catalog/catalog.db`, before running migrations -- that already-real
-value wins, so `DATABASE_URL` in this `.env` can never redirect a live
-server's migrations to your scratch/dev library, however it's launched.
-
-### Running or authoring a migration
-
-`alembic.ini` lives inside the MCP package
-(`packages/rpg-librarian-mcp/src/rpg_librarian_mcp/alembic/`),
-not at the repo root — it's bundled there so migrations work post-install
-(PyPI/`pipx`), not just from a source checkout. Every `alembic` CLI
-invocation needs the package-local path explicitly;
-bare `alembic ...` from the repo root won't find the config.
-
-After changing a model in `model/`, generate a revision from the diff:
-
-uv run alembic -c packages/rpg-librarian-mcp/src/rpg_librarian_mcp/alembic/alembic.ini revision --autogenerate -m "..."
-
-Review the generated file under
-`packages/rpg-librarian-mcp/src/rpg_librarian_mcp/alembic/migrations/versions/`
-— autogenerate can miss
-renames (reads as drop+add) or defaults, so fix up by hand if needed. Then
-apply it to your `DATABASE_URL` target to confirm it runs cleanly:
-
-uv run alembic -c packages/rpg-librarian-mcp/src/rpg_librarian_mcp/alembic/alembic.ini upgrade head
-
-## Checks
-
-uv run pytest
-uv run ruff check --fix
-uv run ruff format
+```bash
+uv run ruff check
+uv run ruff format --check
 uv run ty check
+uv run pytest
+uv run python scripts/check_migrations.py
+```
 
-These also run as git hooks — ruff and ty on commit, pytest on push. Install
-them once per clone:
+The migration check builds a temporary catalog and compares migrated schema with
+the application's SQLModel metadata. The remaining existing tests cover the tools
+package; application behavior can be checked directly with a scratch catalog.
+Follow [.work-items/workflow.md](.work-items/workflow.md) for the
+project's verification policy.
 
+Install the repository hooks with:
+
+```bash
 uv run pre-commit install --install-hooks -t pre-commit -t pre-push
-
-The hooks shell out to `uv run`, so tool versions come from the `dev`
-dependency group in `pyproject.toml` — bump them there, not in
-`.pre-commit-config.yaml`. When `ruff check --fix` or `ruff format` rewrites a
-file, the commit fails and the fix is left unstaged; `git add` it and commit
-again.
+```

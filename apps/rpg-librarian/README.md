@@ -8,13 +8,18 @@ then filing (the `process-batch` skill), then `reorganize`. See `.work-items/rpg
 
 ## Agent skills
 
+RPG applications and utilities use `rpg-software`, with the software family or
+publisher as the product line and the specific application or release as the
+product. VTT content packs continue to use `vtt packs`.
+
 Travel guidebooks use the `travel-guides` product type, with the publisher or guide
 series as the product line (for example `Lonely Planet`) and the individual book as
 the product (for example `Japan, 18th Edition`). Other guide publishers can have
 their own lines under the same type. Re-run `rpg-librarian init --library <library>
 --catalog <catalog.db>` to add missing seed types to an existing catalog.
 
-`init` installs the bundled `process-batch` and `review-items` skills into all three
+`init` installs the bundled `process-batch`, `review-items`, and
+`review-organization` skills into all three
 project-local agent locations: `.claude/skills/`, `.codex/skills/`, and
 `.gemini/skills/`. Existing local copies are never overwritten, so they may be
 customized safely. That also means a library initialized before an update keeps its old
@@ -30,18 +35,51 @@ claude mcp add rpg-librarian-app -- uv run --project /path/to/this/repo \
   rpg-librarian serve --catalog /path/to/catalog.db
 ```
 
-Fifteen tools: `list_unfiled` (the worklist), `list_product_types`, `list_product_lines`,
+Twenty-one tools: `list_unfiled` (the worklist), `list_product_types`, `list_product_lines`,
 `report_entry`, `report_product`, `report_line`, `describe_schema`, `query` (read-only
 SQL), `update_product`, `clear_errors` (clears every recorded error, or only some
 stages' errors), `rename-file` (renames a cataloged file on disk and updates its
 catalog path, or, for a kept file whose product has moved, only in the catalog for
 `reorganize` to apply), and the pack tools `report-pack`, `create-pack`, `add-to-pack`,
-and `remove-from-pack`. Every id they take or return is an entry id: a file's or a
-pack's. The filing operations are also available on the command line (`list-unfiled`,
+and `remove-from-pack`, plus six `organization_review_*` tools described below.
+The existing item tools use entry IDs: a file's or a pack's. Organization review also
+explicitly exposes stable file IDs for membership changes and finding IDs for
+recommendations. The filing operations are also available on the command line (`list-unfiled`,
 `list-types`, `list-lines`, `report-entry`, `report-product`, `report-line`,
 `update-product`, `clear-errors [--stage STAGE ...]`, `report-pack`, `create-pack`,
 `add-to-pack`, `remove-from-pack`) and print JSON. Filing decisions move files when
 you run `reorganize`; `quick-dedupe` finds and moves duplicate files immediately.
+
+## Reviewing library organization
+
+Invoke `$review-organization` (or ask to review the library's organization). The
+invoking LLM compares related products, lines, and packs, applies well-supported
+corrections automatically, and saves judgment calls for `$review-items`.
+
+The MCP interface uses `organization_review_start`, `organization_review_group`,
+`organization_review_commit`, `organization_review_receipt`,
+`organization_review_findings`, and `organization_review_resolve`. A default pass
+examines three product or unassigned-folder groups; a selected product line and
+batch size can be requested. Interrupted passes resume from database records.
+Unchanged groups stay examined; changed content, evidence, or relationships make
+them eligible again. Coverage means examined, not guaranteed correct.
+
+Each group's automatic correction and explanation commit atomically. Snapshot
+fingerprints reject stale corrections. Findings are keyed to stable file IDs so
+pack membership changes do not erase them. Organization recommendations appear in
+the existing review queue and retain your explicit resolutions. Unchanged owner
+choices cannot be automatically reopened; changed evidence needs an explanation.
+
+Catalog migration `0007` adds `organization_coverage`, `organization_run`, and
+`organization_finding`, without changing existing content or assignments. The MCP
+server upgrades on startup; restart an existing server to load the new tools.
+Re-run `init` to install a missing skill. For an existing customized review-items
+copy, merge the new organization-recommendation instructions rather than erasing
+customizations.
+
+This skill changes catalog organization only. It does not scan, enrich, rename,
+move, or delete files. Preview placement with `rpg-librarian reorganize --dry-run`,
+then run `reorganize` when ready to make the physical library match the catalog.
 
 ## Quickly cleaning a large incoming dump
 
@@ -229,9 +267,138 @@ alone does not undo disk renames: use the matching journal if recovery is requir
 
 Every run appends JSON lines to `logs/events.log`, beside the catalog. A `scan` or
 `enrich` run is a `call_started` line, one `file` line per file (with its outcome), and a
-`call_finished` line with the totals; they share a `call_id`. For example:
+`call_finished` line with the totals; they share a `call_id`.
+Files needing processing also emit `file_started` and `file_stage_started` before
+work begins. Each event is flushed immediately and includes `pid`; use
+`file_event_id` to match start/stage markers to the final `file` event. After a hard
+crash, the last unmatched start/stage identifies the active input and operation.
+It is a candidate for investigation, not proof of corrupt content.
+
+Python's fault handler automatically appends fatal-error stacks to
+`logs/crash-stderr.log` for the application and its isolated extraction workers.
+Activation headers include the PID and UTC time to correlate with `events.log`.
+These diagnostics apply on the next process start; no special invocation is needed.
+For startup failures and other native stderr messages, also launch with
+`PYTHONFAULTHANDLER=1` and append stderr to that same file.
+
+For example:
 
 ```bash
 jq -c 'select(.event=="call_finished") | {command, outcome, seen, processed, errored}' logs/events.log
 jq -c 'select(.event=="file" and .outcome=="error") | {path, source, error_message}' logs/events.log
 ```
+
+## Brendan OneDrive importer
+
+`import-run brendan` is a resumable manual job. It uses the OneDrive and Gmail
+settings in the application's `.env`, including the separate MSAL token-cache
+path. This checkout loads `.env` from the application source location, so the
+command can run from another directory. Existing environment variables take
+precedence. The catalog still needs an explicit path or `RPG_LIBRARIAN_CATALOG`.
+The Microsoft public client needs delegated personal-account read access; the
+importer makes no remote writes.
+
+Register a dedicated folder **inside an existing staging root**, then run:
+
+```bash
+uv run rpg-librarian import-source add brendan --catalog /path/to/catalog.db --inbox /path/to/inbox/brendan
+uv run rpg-librarian import-source doctor brendan --catalog /path/to/catalog.db
+uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db
+uv run rpg-librarian import-status brendan --catalog /path/to/catalog.db
+```
+
+The first `import-run` can also register the source, using `--inbox` or, when
+there is exactly one staging root, its `brendan/` subdirectory. It never registers
+a nested catalog root. Keep the same catalog, source IDs and destination on later
+runs. `import-source auth brendan` performs Microsoft device sign-in if the cached
+account needs authorization again; ordinary runs never open a sign-in prompt.
+`doctor` checks cached access, shared-folder delta, destination reachability and
+Claude CLI presence. It does not send a test email or verify Claude login.
+
+Each top-level source folder is a complete transfer group. Selecting a folder
+queues **all eligible missing files in that folder and every subfolder**, across
+all file types. Default run limits are 100 transfer attempts, 5 GiB reserved
+transfer bytes, two hours, and 50 filing entries. A large folder can take several
+runs. **No scanning, pack discovery, enrichment or filing of that group starts
+until its transfers are complete.** Repeat the same command to continue. Already
+selected folders take priority, then fresh folders, then the initial backlog.
+Other completed folders can progress while an individual file retries.
+
+Graph delta provides the current metadata inventory; the root `catalog.json`
+adds optional title context. Discovery saves every page and resumes interrupted
+cycles. It does not download the whole share. Matching uses local product-line
+names/aliases, distinctive filenames, exact sizes and conservative renamed-PDF
+fingerprints. A metadata match is an ownership assumption, not byte equality.
+The matching local occurrence must pass a current size/mtime check. Uncertain
+matches are copied without a review gate. Downloaded candidates receive SHA-256
+checks against fresh local catalog occurrences. Source content changes create
+new revisions; remote removals never delete local files.
+
+Files are copied under `brendan/<source-relative-path>` and existing destination
+files are never overwritten. Every underscore-prefixed folder and all its
+descendants are excluded at every depth. Root catalogs/organizing reports and
+`_index.md` are control files. An underscore-prefixed **file** is otherwise allowed.
+Nested remote shortcuts are not followed. Original source paths, remote IDs,
+content versions, ownership methods, hashes and local file IDs remain in the
+private journal, including after normal catalog cleaning.
+
+Once a group is complete, the app scans only its imported files, finds packs,
+enriches selected entries, and uses the signed-in Claude CLI to file them through
+an explicit MCP configuration. The server rejects writes outside the selected
+entries and imported files; shell, rename and pack-edit tools are unavailable to
+that session. Placement is restricted to the imported files. Synthetic `brendan/`
+is removed from enrichment path clues. Uncertain filing creates a catalog review
+flag and allows other entries to continue. Review flags are resolved with the
+normal `report-entry` and `update-product` commands.
+
+Useful manual controls:
+
+```bash
+# Metadata only: creates inventory/progress records but copies no RPG content.
+uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --discover-only
+# Work on one entire top-level folder, possibly across repeated runs.
+uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --folder 'Product line'
+# Change pacing; byte limits are integers in bytes.
+uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --max-files 20 --max-bytes 1073741824
+# Allow one first file larger than the byte limit, rather than leaving it queued.
+uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --allow-oversized
+# Copy only; keep completed groups ready for a later processing run.
+uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --no-process
+# Process completed local groups without Microsoft access or discovery.
+uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --process-only
+# Export all unresolved reviews, including ones previously emailed.
+uv run rpg-librarian import-reviews brendan --catalog /path/to/catalog.db
+# Resolve a source/transfer/processing issue after correcting it.
+uv run rpg-librarian import-review resolve 'source:access' --catalog /path/to/catalog.db
+```
+
+Only unresolved **newly actionable** issues generate a digest. Unchanged issues
+already emailed remain in the persistent report without repeated mail. Transient
+item failures retry after 5 minutes, 30 minutes, then two hours; three failed
+attempts become a review. Sign-in/access problems are actionable immediately.
+`--no-email` retains notifications for a later run. Failed delivery retains the
+outbox and stable Message-ID; SMTP acceptance followed by a process crash can
+produce a duplicate digest on retry. Empty and successful runs send no email.
+
+State is in `imports/brendan.sqlite3` beside the catalog, with private catalog
+context, review export and filing manifests in the same directory. Back up this
+journal along with the catalog and token cache; do not delete it between runs.
+The journal uses logical catalog file references rather than foreign keys, so
+provenance survives catalog cleanup. A host file lock rejects overlapping
+importer jobs. SQLite is intended for a local catalog/state disk, not the SMB
+content share. Status pending byte counts include files whose ownership has not
+yet been checked, so they are an upper bound on remaining downloads.
+
+Incomplete metadata cycles delay processing to protect the complete-folder rule;
+an outage before any new metadata page arrives still permits saved completed
+local groups to process. Provider calls already in flight can exceed the nominal
+run deadline; new calls stop when the deadline is reached. Restart interrupted
+transfers from the beginning. Source renames update current provenance while
+already published files retain their original copied paths. Pack discovery uses
+the group's imported file IDs, so a changed top-level name does not lose those
+files from its work scope. Persistent errors/reviews remain inspectable even
+when the overall bounded run returns zero; shared access or mail failures return
+nonzero. No automatic trash cleaning occurs.
+
+No timer is installed by these commands. Run the importer manually as often as
+needed; nightly scheduling can be added after that manual rollout.

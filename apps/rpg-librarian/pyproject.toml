@@ -10,6 +10,7 @@ dependencies = [
     "isbnlib>=3.10.14",
     "litellm>=1.60",
     "lxml>=6.0",  # trimesh's 3mf loader lazily needs this; not pulled in transitively
+    "msal>=1.34",
     "mutagen>=1.48.1",
     "networkx>=3.5",  # trimesh's 3mf/scene-graph loader lazily needs this
     "pebble>=5.2.1",

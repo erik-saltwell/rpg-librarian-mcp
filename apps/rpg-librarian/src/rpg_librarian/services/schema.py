@@ -87,6 +87,19 @@ _TABLE_NOTES = {
     "review_flag": (
         "A deferral: the LLM could not place the entry. Open while resolved_at is null."
     ),
+    "organization_coverage": (
+        "Last examined content/evidence/relationship fingerprint per product or "
+        "unassigned-folder group. Unchanged groups are not examined again."
+    ),
+    "organization_run": (
+        "Resumable bounded organization-review passes: scope, selected groups, "
+        "completed group receipts, and active/complete status."
+    ),
+    "organization_finding": (
+        "Durable group corrections and recommendations: explanations, operations, "
+        "before/after context, stable file IDs, and explicit owner resolutions. "
+        "Does not cascade from entry IDs when pack membership replaces them."
+    ),
 }
 
 _EXAMPLE_QUERIES = [

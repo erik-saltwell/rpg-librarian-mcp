@@ -9,6 +9,7 @@ from __future__ import annotations
 
 SEED_PRODUCT_TYPES: tuple[str, ...] = (
     "games",
+    "rpg-software",
     "maps",
     "animated-maps",
     "soundfx",

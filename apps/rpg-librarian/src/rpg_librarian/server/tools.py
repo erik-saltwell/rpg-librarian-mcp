@@ -39,6 +39,10 @@ def _read(db_path: Path, function: Callable[..., Any], **arguments: Any) -> Any:
 
 
 def register_tools(mcp: FastMCP, db_path: Path) -> None:
+    from .organization import register
+
+    register(mcp, db_path)
+
     @mcp.tool
     def list_unfiled(
         folder: str | None = None,
@@ -381,4 +385,11 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
 
 
 def _update(session: Session, request: UpdateProductRequest) -> dict[str, Any]:
+    import os
+
+    from ..imports.scope import enforce
+
+    manifest = os.environ.get("RPG_LIBRARIAN_IMPORT_MANIFEST")
+    if manifest:
+        enforce(session, request.entry_ids, Path(manifest))
     return update_product(session, request)

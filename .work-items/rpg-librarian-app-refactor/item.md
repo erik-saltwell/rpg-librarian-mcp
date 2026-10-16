@@ -36,6 +36,15 @@ verification was performed for this closure. Historical Phase 6 checkboxes and
 manual-verification notes remain as recorded; closure does not assert that those
 checks or the old-package removal were completed.
 
+## Cleanup follow-up (2026-10-10)
+
+Completed the user's requested Phase 6 cleanup: removed the remaining v1 package
+and dependent legacy support files, refreshed workspace dependencies and tooling,
+and updated the root README, environment example and debugger configuration.
+Verification and limitations are recorded in progress.md, including lint/types,
+three existing tests, migration/build checks, a scratch CLI pipeline and actual
+stdio MCP startup/tool call. Earlier closure and verification notes remain historical.
+
 ## Historical resume note (superseded by completion)
 
 Status is `implementing`; Phases 0 to 5 of `plan.md` are done (see `progress.md`). The
