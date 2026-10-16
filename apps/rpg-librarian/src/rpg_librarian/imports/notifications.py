@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import smtplib
-import ssl
 import uuid
 from email.message import EmailMessage
 from pathlib import Path
 
+from ..smtp import send_message
 from .config import setting
 from .state import State
 
@@ -71,28 +70,7 @@ def notify(state: State, *, enabled: bool = True) -> int:
             )
             + f"\n\nFull unresolved review list on this machine: {report}\n"
         )
-        host = os.environ.get("RPG_LIBRARIAN_SMTP_HOST", "smtp.gmail.com")
-        port = int(os.environ.get("RPG_LIBRARIAN_SMTP_PORT", "465"))
-        context = ssl.create_default_context()
-        mode = os.environ.get("RPG_LIBRARIAN_SMTP_TLS", "ssl")
-        if mode not in ("ssl", "starttls"):
-            raise ValueError("SMTP requires ssl or starttls.")
-        connection = (
-            smtplib.SMTP_SSL(host, port, timeout=30, context=context)
-            if mode == "ssl"
-            else smtplib.SMTP(host, port, timeout=30)
-        )
-        with connection as smtp:
-            if mode == "starttls":
-                smtp.ehlo()
-                smtp.starttls(context=context)
-                smtp.ehlo()
-            smtp.login(
-                setting("SMTP_USERNAME"), setting("SMTP_PASSWORD").replace(" ", "")
-            )
-            refused = smtp.send_message(message)
-            if refused:
-                raise RuntimeError("SMTP refused a digest recipient.")
+        send_message(message)
         with state.db:
             state.db.execute(
                 "UPDATE digest SET status='sent',error=NULL WHERE id=?", (identity,)

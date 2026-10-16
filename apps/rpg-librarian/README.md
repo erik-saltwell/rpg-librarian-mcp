@@ -263,6 +263,104 @@ and updates the catalog in a transaction; a failed catalog write rolls the renam
 back. A second run changes nothing once cleanup is complete. The database backup
 alone does not undo disk renames: use the matching journal if recovery is required.
 
+## Visual inspection
+
+The MCP `view_file` tool returns an image for the agent's own vision capabilities,
+with source and dimension metadata. Use `entry_id` for a loose image or PDF; PDF
+`page` numbers start at 1 and default to the first page. For a pack, additionally
+select `member_path` using a member's root-relative `relative_path` and `root_id`
+from `report-pack`. It resolves the current catalog location, never arbitrary paths.
+
+One preview is returned per call: JPEG, default longest edge 1600 pixels,
+`max_edge` from 512 to 2400. Images use the first frame, EXIF orientation and white
+behind transparency. Rendering runs in a disposable worker with a 60-second limit;
+inputs are limited to 512 MiB, decoded images to 40 megapixels, and output to 8 MiB.
+Missing, unsupported, encrypted, damaged or oversized inputs return tool errors.
+No catalog judgments or source files are changed. Clients must pass MCP image
+content to a vision-capable model; verify that integration before unattended use.
+
+The bundled process-batch and review-items skills instruct agents to inspect visual
+questions before requesting human inspection, while retaining uncertainty about
+exact product identities and editions when evidence remains insufficient.
+
+## Unattended batch processing
+
+```sh
+rpg-librarian process-batch --catalog /path/to/catalog.db --root /path/to/inbox
+```
+
+`--root` must name a registered, reachable staging root (use `add-source` first).
+It does not accept a descendant folder or silently process its parent. The command
+runs quick deduplication, scan, pack discovery, enrichment, agent filing, and
+reorganization. Deduplication, scan and discovery are limited to this root;
+enrichment, filing and reorganization cover the entire catalog. The command makes
+catalog decisions and moves files, as the previous shell script did.
+
+Claude CLI must be installed and signed in. The command supplies the bundled filing
+instructions and an explicit catalog-bound MCP configuration, so it can run from
+another working directory without a local slash-command copy or MCP configuration.
+Filing includes visual inspection and pack tools; arbitrary shell tools and physical
+renaming are not available to the agent. Uncertain judgments become review flags.
+It does not open an interactive review session. Review later with `/review-items`.
+
+Each invocation prints a private local summary path under
+`logs/process-batch/<run-id>/summary.json` beside the catalog. It includes stage
+outcomes/counters, new-input observations, total/category review counts, and email
+status or suppression reason. Stage stdout/stderr and private agent output live
+beside the summary. Records are retained until you remove them. Do not publish raw
+agent output: it can contain document evidence. Fatal stacks also appear in the
+existing `logs/crash-stderr.log`.
+
+Email uses the same `RPG_LIBRARIAN_SMTP_USERNAME`, `SMTP_PASSWORD`, `REVIEW_EMAIL_TO`,
+`SMTP_HOST`, `SMTP_PORT` and `SMTP_TLS` settings as the Brendan importer (all names
+have the `RPG_LIBRARIAN_` prefix). TLS is required, using `ssl` or `starttls`.
+
+- No email when there is no new or changed input, even with older reviews or later
+  processing errors. Unchanged extraction retries alone are not new input.
+- No email when all processing completes without issues and the review backlog is
+  empty.
+- Otherwise, email the run outcome, stages, total backlog and category counts.
+  Counts include older unresolved reviews across the entire catalog, not just this
+  root or run. Input is observed before deduplication can move new duplicates away.
+- If input enumeration fails before its count is known, the count stays unknown
+  and a failure email is attempted. Unavailable backlog counts are also unknown,
+  never silently zero. A failed delivery remains visible in the summary.
+
+`review_backlog` is the shared MCP definition of outstanding review work. It covers
+flags, blocked moves, unresolved folder judgments and deferred organization
+findings. Entry flags and blocked moves count once in the total, but both category
+counts include that entry. Marker-only flags linked to deferred findings count with
+the finding; unrelated flag questions remain separate. Folders and findings are
+separate review identities, so this total is review items, not a count of files or
+conflict-resolution actions. Follow `next_after_key` when MCP results are truncated.
+
+Rerun the same command after a failure. Committed scan/evidence/filing decisions and
+completed moves are retained; eligibility is recomputed from the catalog rather
+than replaying old stage results. Outstanding catalog-wide work still runs when
+there is no new input; email eligibility is evaluated for the current invocation.
+Quick-deduplication failure is recorded and processing continues. A fatal later
+stage stops dependent stages, then the parent attempts final reporting. Handled
+file errors, incomplete agent filing and source failures are recorded even when
+an existing standalone command would return zero.
+
+The exit code is zero for complete processing with any required email accepted;
+a review backlog alone is not a failure. Processing issues, incomplete stages and
+email failures return nonzero; interrupts retain conventional interrupt codes.
+Batch runs and Brendan imports share a cooperative per-catalog lock. Ordinary
+standalone commands and interactive MCP writers are not covered by that lock.
+
+Processing stages run in child processes so a stage segfault can be recorded by
+the parent. If the parent or machine is killed, its last atomic stage record remains
+available; the next batch marks abandoned runs interrupted and stops children with
+that run's ownership token before proceeding. This provides recovery, not immediate
+notification after a machine failure. An SMTP acceptance followed by a parent crash
+can leave delivery uncertain; old notifications are not automatically replayed.
+
+The repository and production `process-batch.zsh` wrappers forward to this command,
+retaining `/phinneas/rpg/inbox` as the default root. The production wrapper also
+anchors `catalog.db` beside the script, independent of the calling directory. Pass
+CLI flags to override these defaults.
+
 ## Logs
 
 Every run appends JSON lines to `logs/events.log`, beside the catalog. A `scan` or
@@ -288,117 +386,150 @@ jq -c 'select(.event=="call_finished") | {command, outcome, seen, processed, err
 jq -c 'select(.event=="file" and .outcome=="error") | {path, source, error_message}' logs/events.log
 ```
 
-## Brendan OneDrive importer
+## Sync download sources
 
-`import-run brendan` is a resumable manual job. It uses the OneDrive and Gmail
-settings in the application's `.env`, including the separate MSAL token-cache
-path. This checkout loads `.env` from the application source location, so the
-command can run from another directory. Existing environment variables take
-precedence. The catalog still needs an explicit path or `RPG_LIBRARIAN_CATALOG`.
-The Microsoft public client needs delegated personal-account read access; the
-importer makes no remote writes.
+`sync-sources` is a one-shot nightly coordinator. It processes registered sources
+**serially**: discover, classify, admit, copy and finish `process-batch` for one source
+before attempting the next. Discovery/download failures and processing failures are
+recorded per source; other sources continue. Any failure returns nonzero and sends
+one combined failure email after all selected sources have been attempted.
 
-Register a dedicated folder **inside an existing staging root**, then run:
+### Registry and accounts
 
-```bash
-uv run rpg-librarian import-source add brendan --catalog /path/to/catalog.db --inbox /path/to/inbox/brendan
-uv run rpg-librarian import-source doctor brendan --catalog /path/to/catalog.db
-uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db
-uv run rpg-librarian import-status brendan --catalog /path/to/catalog.db
-```
-
-The first `import-run` can also register the source, using `--inbox` or, when
-there is exactly one staging root, its `brendan/` subdirectory. It never registers
-a nested catalog root. Keep the same catalog, source IDs and destination on later
-runs. `import-source auth brendan` performs Microsoft device sign-in if the cached
-account needs authorization again; ordinary runs never open a sign-in prompt.
-`doctor` checks cached access, shared-folder delta, destination reachability and
-Claude CLI presence. It does not send a test email or verify Claude login.
-
-Each top-level source folder is a complete transfer group. Selecting a folder
-queues **all eligible missing files in that folder and every subfolder**, across
-all file types. Default run limits are 100 transfer attempts, 5 GiB reserved
-transfer bytes, two hours, and 50 filing entries. A large folder can take several
-runs. **No scanning, pack discovery, enrichment or filing of that group starts
-until its transfers are complete.** Repeat the same command to continue. Already
-selected folders take priority, then fresh folders, then the initial backlog.
-Other completed folders can progress while an individual file retries.
-
-Graph delta provides the current metadata inventory; the root `catalog.json`
-adds optional title context. Discovery saves every page and resumes interrupted
-cycles. It does not download the whole share. Matching uses local product-line
-names/aliases, distinctive filenames, exact sizes and conservative renamed-PDF
-fingerprints. A metadata match is an ownership assumption, not byte equality.
-The matching local occurrence must pass a current size/mtime check. Uncertain
-matches are copied without a review gate. Downloaded candidates receive SHA-256
-checks against fresh local catalog occurrences. Source content changes create
-new revisions; remote removals never delete local files.
-
-Files are copied under `brendan/<source-relative-path>` and existing destination
-files are never overwritten. Every underscore-prefixed folder and all its
-descendants are excluded at every depth. Root catalogs/organizing reports and
-`_index.md` are control files. An underscore-prefixed **file** is otherwise allowed.
-Nested remote shortcuts are not followed. Original source paths, remote IDs,
-content versions, ownership methods, hashes and local file IDs remain in the
-private journal, including after normal catalog cleaning.
-
-Once a group is complete, the app scans only its imported files, finds packs,
-enriches selected entries, and uses the signed-in Claude CLI to file them through
-an explicit MCP configuration. The server rejects writes outside the selected
-entries and imported files; shell, rename and pack-edit tools are unavailable to
-that session. Placement is restricted to the imported files. Synthetic `brendan/`
-is removed from enrichment path clues. Uncertain filing creates a catalog review
-flag and allows other entries to continue. Review flags are resolved with the
-normal `report-entry` and `update-product` commands.
-
-Useful manual controls:
+The catalog needs a reachable library and a registered staging inbox (`add-source`).
+Download sources are separate named remote folders. A source has a stable lowercase
+name, provider, account profile, remote folder identity and enabled flag. Source
+names form local inbox namespaces; they are not product lines. Multiple folders can
+share an authenticated account. OneDrive is implemented; the provider boundary owns
+observation, version validation and downloading so future adapters can reuse the
+same admission, copy, recovery and processing logic.
 
 ```bash
-# Metadata only: creates inventory/progress records but copies no RPG content.
-uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --discover-only
-# Work on one entire top-level folder, possibly across repeated runs.
-uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --folder 'Product line'
-# Change pacing; byte limits are integers in bytes.
-uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --max-files 20 --max-bytes 1073741824
-# Allow one first file larger than the byte limit, rather than leaving it queued.
-uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --allow-oversized
-# Copy only; keep completed groups ready for a later processing run.
-uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --no-process
-# Process completed local groups without Microsoft access or discovery.
-uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --process-only
-# Export all unresolved reviews, including ones previously emailed.
-uv run rpg-librarian import-reviews brendan --catalog /path/to/catalog.db
-# Resolve a source/transfer/processing issue after correcting it.
-uv run rpg-librarian import-review resolve 'source:access' --catalog /path/to/catalog.db
+# First folder on an account; IDs/cache defaults may come from the existing .env.
+rpg-librarian sync-source add brendan --catalog /path/to/catalog.db \
+  --provider onedrive --account personal \
+  --drive-id DRIVE_ID --folder-id ROOT_ITEM_ID \
+  --client-id MICROSOFT_PUBLIC_CLIENT_ID --token-cache /private/path/msal.json
+# Another folder on the same account:
+rpg-librarian sync-source add other-folder --catalog /path/to/catalog.db \
+  --account personal --drive-id DRIVE_ID --folder-id OTHER_ITEM_ID
+rpg-librarian sync-source auth brendan --catalog /path/to/catalog.db
+rpg-librarian sync-source doctor brendan --catalog /path/to/catalog.db
+rpg-librarian sync-source list --catalog /path/to/catalog.db
+rpg-librarian sync-source status brendan --catalog /path/to/catalog.db
+rpg-librarian sync-source disable other-folder --catalog /path/to/catalog.db
+rpg-librarian sync-source enable other-folder --catalog /path/to/catalog.db
 ```
 
-Only unresolved **newly actionable** issues generate a digest. Unchanged issues
-already emailed remain in the persistent report without repeated mail. Transient
-item failures retry after 5 minutes, 30 minutes, then two hours; three failed
-attempts become a review. Sign-in/access problems are actionable immediately.
-`--no-email` retains notifications for a later run. Failed delivery retains the
-outbox and stable Message-ID; SMTP acceptance followed by a process crash can
-produce a duplicate digest on retry. Empty and successful runs send no email.
+`--authority` and `--scopes` configure a new account profile when needed. Auth is an
+explicit interactive Microsoft sign-in; nightly runs use the private token cache
+and never prompt. `doctor` checks source access and saves metadata observation,
+without copying, running an agent, or sending email. The application loads its
+existing `.env`; inherited environment variables take precedence. No token contents
+or signed download URLs are stored in source definitions or notifications.
 
-State is in `imports/brendan.sqlite3` beside the catalog, with private catalog
-context, review export and filing manifests in the same directory. Back up this
-journal along with the catalog and token cache; do not delete it between runs.
-The journal uses logical catalog file references rather than foreign keys, so
-provenance survives catalog cleanup. A host file lock rejects overlapping
-importer jobs. SQLite is intended for a local catalog/state disk, not the SMB
-content share. Status pending byte counts include files whose ownership has not
-yet been checked, so they are an upper bound on remaining downloads.
+### Running and admission
 
-Incomplete metadata cycles delay processing to protect the complete-folder rule;
-an outage before any new metadata page arrives still permits saved completed
-local groups to process. Provider calls already in flight can exceed the nominal
-run deadline; new calls stop when the deadline is reached. Restart interrupted
-transfers from the beginning. Source renames update current provenance while
-already published files retain their original copied paths. Pack discovery uses
-the group's imported file IDs, so a changed top-level name does not lose those
-files from its work scope. Persistent errors/reviews remain inspectable even
-when the overall bounded run returns zero; shared access or mail failures return
-nonzero. No automatic trash cleaning occurs.
+```bash
+rpg-librarian sync-sources --catalog /path/to/catalog.db --inbox /path/to/inbox
+rpg-librarian sync-sources --catalog /path/to/catalog.db --inbox /path/to/inbox \
+  --source brendan --max-new-files 100
+```
 
-No timer is installed by these commands. Run the importer manually as often as
-needed; nightly scheduling can be added after that manual rollout.
+All enabled sources run in name order by default. Repeated `--source` options select
+an explicit order, including disabled sources for an intentional manual run. Names
+are attempted once per invocation. `--inbox` names the exact registered staging
+root; files are placed under `<inbox>/<source>/<original-relative-path>`.
+
+New content includes additions and updated source versions. Confirmed local hash
+matches are excluded across present catalog files in registered roots and files
+already copied manually into the selected inbox. Filename, title and size guesses
+never establish ownership. The entire remaining current source inventory is counted;
+the limit is not permission to import the first 100 files of a larger source.
+
+- Zero: retain an idle receipt; no processing or routine email.
+- Above `--max-new-files` (default 100, independently per source): email the exact
+  count for manual copying **and processing**, publish nothing, and continue with
+  the next source. An unchanged pending manifest is not emailed repeatedly; known
+  failed delivery retries, while interrupted/uncertain delivery is recorded and
+  not resent blindly. A changed manifest or limit can generate another notice.
+- Within the limit: stage the complete admitted batch privately, publish without
+  overwrites, then invoke the same shared batch runner as `process-batch`.
+
+The default source discovery/classification/copy budget is `--max-seconds 7200`.
+It does not truncate the admitted source or limit downstream processing. Incomplete
+observations/classification are failures, never false zero counts. Graph requests
+already in flight can extend beyond that budget. Private cached file bytes are
+bounded per source by `--max-cache-bytes` (default 20 GiB); retain digest proofs when
+bytes are evicted. Increase the limit or handle the source manually if an admitted
+batch needs more staging space. Interrupted downloads restart from the beginning.
+
+Source metadata may not supply a usable SHA-256. Counting may require downloading
+unfamiliar/changed candidates into private staging first. The large-batch rule
+therefore prevents inbox publication and processing, not all network traffic.
+Unchanged versions reuse verified source digests and local hashing caches with
+size/inode/nanosecond modification/change-time checks. First reconciliation of an
+old metadata-matched source can be expensive; old guesses are not trusted proofs.
+
+Underscore folders/descendants, root organizing catalogs, `_index.md` and remote
+shortcuts retain the OneDrive discovery exclusions. Hidden and agent-context paths
+that the local scanner excludes are ignored. Remote removal never deletes local
+content; no files are uploaded. Different content at an occupied destination receives
+a deterministic source/version suffix. Existing versions are preserved.
+
+### Processing, notifications and recovery
+
+Each source gets a separate `process-batch` run. Scan, quick dedupe and pack discovery
+use the selected inbox; enrichment, filing, reorganization and review counts retain
+the shared pipeline's catalog-wide behavior. Leftover files from another source can
+be processed by a later run. One catalog orchestration lock prevents overlapping
+sync/legacy-import/batch jobs; the coordinator reuses that lock for its batch calls.
+The filing agent receives the source namespace as provenance context.
+
+Completed runs retain normal shared review-backlog reporting: the count covers all
+four review queues across the catalog. Clean completed processing with zero reviews
+sends no routine email; the shared no-new-input suppression still applies. Source
+and batch failures, including zero-new-file failures, go into the combined end-of-run
+failure message rather than separate batch failure emails. Mail uses the existing
+`RPG_LIBRARIAN_SMTP_*` and `RPG_LIBRARIAN_REVIEW_EMAIL_TO` configuration. Failed delivery
+is persisted and returns nonzero. SMTP acceptance followed by a crash has uncertain
+delivery; exactly-once email is not promised.
+
+Private state beside the catalog includes `imports/sources.json` (registry/account
+references), `imports/<source>.sqlite3` (discovery/history/hash proofs/admission),
+`imports/local-hashes.sqlite3`, and `imports/cache/<source>/` (evictable staged bytes).
+Back up the registry, source journals, catalog and token caches together. Keep state
+on a local filesystem, not the SMB content share. Every run, including idle and
+manual-required checks, saves `logs/sync-sources/<run-id>/summary.json`, with counts,
+manifest, bytes, publication state, errors, delivery outcomes and linked batch logs.
+
+Small-batch admission and each published file are journaled. Rerunning resumes an
+unfinished admitted batch **before** the zero-new-files decision, even if the source
+files are now locally owned. Processing-only handoffs can resume without source
+access. A different inbox cannot silently take over an unfinished batch. Stale
+admissions that have published nothing can be cancelled and rediscovered; partial
+publication retains its recorded snapshot. Crash recovery cleans up orphaned batch
+children before new work. Completed files and catalog decisions survive reruns.
+
+Existing `imports/brendan.sqlite3` source identity is adopted automatically without
+moving files or discarding revisions. Unfinished previously published work is carried
+into a processing handoff. Existing SHA-256 downloads seed verified content history;
+metadata ownership guesses require exact reconciliation. `import-status`,
+`import-reviews`, and `import-review` remain available for historical records.
+`import-run` exits with migration guidance; its old transfer-budget/partial-processing
+flags have no automatic equivalent in the whole-source admission model.
+
+### Nightly invocation
+
+The production `process-brendan.zsh` is a one-shot selected-source wrapper;
+`sync-sources.zsh` handles all enabled sources. The old five-minute forever loop is
+retired. For example, a user-managed nightly scheduler can invoke:
+
+```bash
+/home/eriksalt/data/rpg-librarian/sync-sources.zsh
+```
+
+Configure the scheduler's PATH and mounts so the CLI and inbox are reachable, and
+sign in interactively beforehand. No scheduler is installed or enabled by this
+change. Wrapper checks use a stand-in executable and masked SMTP configuration;
+verification does not require importing production content or sending live mail.

@@ -5,11 +5,13 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
 from ..errors import UsageError
+from ..infrastructure.job_lock import catalog_job_lock
 
 SCHEMA = """
 
@@ -49,13 +51,13 @@ CREATE TABLE IF NOT EXISTS run(
 
 class State:
     def __init__(self, catalog: Path, source: str):
-        if source != "brendan":
-            raise UsageError("This importer currently supports the source `brendan`.")
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", source):
+            raise UsageError("Invalid registered source name.")
         if not catalog.is_file():
             raise UsageError("The catalog does not exist. Specify --catalog.")
         self.directory = catalog.parent / "imports"
         self.directory.mkdir(mode=0o700, exist_ok=True)
-        self.path = self.directory / "brendan.sqlite3"
+        self.path = self.directory / f"{source}.sqlite3"
         self.db = sqlite3.connect(self.path, timeout=30)
         os.chmod(self.path, 0o600)
         self.db.row_factory = sqlite3.Row
@@ -130,7 +132,10 @@ INSERT INTO review(subject,reason,fingerprint) VALUES(?,?,?)
 
 @contextmanager
 def job_lock(state: State):
-    with (state.directory / "brendan.lock").open("a") as handle:
+    with (
+        catalog_job_lock(Path(state.get("catalog"))),
+        (state.directory / "brendan.lock").open("a") as handle,
+    ):
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

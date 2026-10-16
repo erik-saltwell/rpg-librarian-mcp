@@ -129,6 +129,9 @@ class ScanStats:
     seen: int = 0
     skipped: int = 0
     processed: int = 0
+    new: int = 0
+    changed: int = 0
+    retry: int = 0
     moved: int = 0
     duplicates: int = 0
     missing: int = 0
@@ -222,12 +225,15 @@ class Scanner:
             log_file_skipped(existing.id, path, action="unchanged", size_bytes=size)
             return
 
+        action = self._action(existing, size, mtime)
+        if action in {"new", "changed", "retry"}:
+            setattr(self.stats, action, getattr(self.stats, action) + 1)
         with FileTracker(
             existing.id if existing else None,
             path,
             root_id=root.id,
             size_bytes=size,
-            action=self._action(existing, size, mtime),
+            action=action,
         ) as tracker:
             file = self._process(root, path, relative, size, mtime, existing, local_dir)
             tracker.file_id = file.id

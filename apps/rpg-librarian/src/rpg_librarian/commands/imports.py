@@ -389,3 +389,12 @@ def run(args: argparse.Namespace, catalog: Path) -> int:
         if client is not None:
             client.close()
         state.close()
+
+
+def retired_run(args: argparse.Namespace, catalog: Path) -> int:
+    raise UsageError(
+        "import-run is retired. Use sync-sources --source brendan --catalog "
+        f"{catalog} --inbox <registered staging root> --max-new-files 100. "
+        "The threshold applies to the entire pending source, not a transfer budget. "
+        "Existing source history is preserved and adopted automatically."
+    )

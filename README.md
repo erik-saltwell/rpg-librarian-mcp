@@ -116,8 +116,21 @@ and files changed since scanning.
 
 The [application README](apps/rpg-librarian/README.md) documents packs, product types,
 filename policy, detailed processing behavior, and review tools.
-`scripts/process-batch.zsh` is a local convenience script with fixed inbox paths
-and an interactive review step; adapt it before using it elsewhere.
+For the unattended pipeline, use:
+
+```sh
+rpg-librarian process-batch --catalog /path/to/catalog.db --root /path/to/inbox
+```
+
+The input must be a registered staging root. Scanning and pack discovery are scoped
+to it; enrichment, filing and reorganization cover the catalog. The command writes
+a local run summary and selectively emails the total review backlog instead of
+opening interactive review. Rerunning preserves committed work. Claude CLI and the
+existing SMTP settings are used; see the [batch documentation](apps/rpg-librarian/README.md#unattended-batch-processing)
+for email suppression, recovery, counters, and exit behavior.
+
+`scripts/process-batch.zsh` forwards to this command with `/phinneas/rpg/inbox` as
+its default root. Interactive `/review-items` remains available separately.
 
 ## Run the MCP server
 
@@ -154,22 +167,29 @@ reports, read-only SQL, filing decisions, review flags, error clearing, pack
 membership, and file renaming. Filing and reporting operations also have CLI
 commands; see `uv run rpg-librarian --help`.
 
-## Import from Brendan
+## Sync download sources
 
-The app can import missing content from Brendan's shared personal OneDrive in
-bounded manual runs. It keeps his folder structure, finishes all missing files
-from a selected top-level folder before pack discovery, saves progress between
-runs, and emails only newly actionable reviews. It uses the configured `.env`
-for OneDrive and Gmail, plus the existing private Microsoft token cache.
+Register named OneDrive folders, then download and process each source serially:
 
 ```bash
-uv run rpg-librarian import-run brendan --catalog /path/to/catalog.db --inbox /path/to/inbox/brendan
-uv run rpg-librarian import-status brendan --catalog /path/to/catalog.db
+rpg-librarian sync-source list --catalog /path/to/catalog.db
+rpg-librarian sync-sources --catalog /path/to/catalog.db --inbox /path/to/inbox
+# Select one source, or change the per-source automatic admission limit:
+rpg-librarian sync-sources --catalog /path/to/catalog.db --inbox /path/to/inbox --source brendan --max-new-files 100
 ```
 
-Repeat `import-run` to continue. The inbox must be inside an existing staging
-root. No nightly schedule is installed. See the [importer instructions](apps/rpg-librarian/README.md#brendan-onedrive-importer)
-for folder selection, limits, discovery-only runs, reviews and recovery.
+New and updated files already owned by matching SHA-256 are excluded before counting.
+Zero pending files exit quietly; more than the per-source limit sends a manual-import
+notice without publishing or processing that source. Small batches are copied safely,
+then passed through the shared `process-batch` pipeline before the next source starts.
+Failures do not stop other sources; one combined failure email is sent at the end.
+Unfinished admitted batches resume automatically. Existing Brendan registrations and
+history are adopted; `import-run` is retired with migration guidance.
+
+See [source registration, accounts and recovery](apps/rpg-librarian/README.md#sync-download-sources)
+for setup, hash verification costs, notification rules and nightly scheduling examples.
+OneDrive is the first provider adapter; Google Drive and Dropbox are not implemented.
+No schedule is installed automatically.
 
 ## Cleanup and maintenance
 

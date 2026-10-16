@@ -16,6 +16,7 @@ from ..db import session_scope
 from ..model import Entry, File
 
 READ_TOOLS = {
+    "review_backlog",
     "list_unfiled",
     "list_product_types",
     "list_product_lines",
@@ -69,11 +70,16 @@ class ImportScopeMiddleware(Middleware):
         name = context.message.name
         if name in READ_TOOLS:
             return await call_next(context)
-        if name != "update_product":
+        arguments = context.message.arguments or {}
+        if name == "view_file":
+            identities = [arguments.get("entry_id")]
+        elif name == "update_product":
+            identities = arguments.get("entry_ids", [])
+        else:
             raise ToolError(
-                "This importer session permits only scoped update_product writes."
+                "This importer session permits scoped view_file reads "
+                "and update_product writes only."
             )
-        identities = (context.message.arguments or {}).get("entry_ids", [])
         if not identities:
             raise ToolError("No entries were selected.")
         with session_scope(self.catalog, migrate=False) as session:

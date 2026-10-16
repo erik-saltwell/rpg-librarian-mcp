@@ -373,7 +373,20 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
                 "--root must be a registered staging root. Run add-source PATH first."
             )
         deduper = Deduper(session, root, library, roots, args.dry_run)
-        deduper.process(_collect(wanted))
+        paths = _collect(wanted)
+        if getattr(args, "batch_mode", False):
+            # Reruns leave scanned survivors in the inbox. Standalone quick-dedupe
+            # still refuses them; the batch scan owns their subsequent processing.
+            pending = []
+            for path in paths:
+                existing = deduper.existing.get(path.relative_to(wanted).as_posix())
+                if existing is None or (
+                    existing[1] is Disposition.duplicate and existing[2] is None
+                ):
+                    pending.append(path)
+            log_call_fields(already_cataloged_skipped=len(paths) - len(pending))
+            paths = pending
+        deduper.process(paths)
         stats, moves = deduper.stats, deduper.moves
         errors = stats.errors + moves.errors + moves.blocked
         print(

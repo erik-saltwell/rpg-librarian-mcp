@@ -16,6 +16,7 @@ from ..model import Disposition
 from ..services import lists, packs, reports, schema
 from ..services.clear_errors import clear_errors
 from ..services.rename_file import rename_file
+from ..services.review_backlog import review_backlog as collect_review_backlog
 from ..services.serialize import to_jsonable
 from ..services.update_product import UpdateProductRequest, update_product
 
@@ -42,6 +43,20 @@ def register_tools(mcp: FastMCP, db_path: Path) -> None:
     from .organization import register
 
     register(mcp, db_path)
+    from .visual import register as register_visual
+
+    register_visual(mcp, db_path)
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def review_backlog(after_key: str = "", limit: int = 100) -> dict[str, Any]:
+        """Complete catalog-wide review counts plus a page of review identities.
+
+        Includes flags, blocked moves, folder judgments and organization findings.
+        Entry flags and blocked moves share one total item; finding-only marker
+        flags are counted with their finding. Category counts can overlap.
+        Follow next_after_key while truncated to collect every item.
+        """
+        return _read(db_path, collect_review_backlog, after_key=after_key, limit=limit)
 
     @mcp.tool
     def list_unfiled(

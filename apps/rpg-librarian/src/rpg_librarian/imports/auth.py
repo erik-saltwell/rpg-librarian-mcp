@@ -45,6 +45,6 @@ def token(config: Config, *, interactive: bool = False) -> str:
                 os.unlink(name)
     if not result or "access_token" not in result:
         raise UsageError(
-            "Microsoft sign-in is required. Run `import-source auth brendan`."
+            "Microsoft sign-in is required. Run `sync-source auth <source-name>`."
         )
     return result["access_token"]

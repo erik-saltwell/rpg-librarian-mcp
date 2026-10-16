@@ -110,6 +110,7 @@ def configure_wide_event_logs(catalog_path: Path) -> None:
 
 def _emit(event: str, **fields: Any) -> None:
     if _logger is not None:
+        fields.setdefault("batch_run_id", os.environ.get("RPG_LIBRARIAN_BATCH_RUN_ID"))
         _logger.msg(event, pid=os.getpid(), **fields)
         if _events_file is not None:
             _events_file.flush()

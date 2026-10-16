@@ -503,6 +503,9 @@ def run(args: argparse.Namespace, catalog_path: Path) -> int:
         invalid=len(finder.stats.invalid),
         errors=len(finder.stats.errors),
         not_asked=finder.stats.not_asked,
+        search_errors=finder.stats.search_errors,
+        stopped=finder.stats.stopped,
+        search_disabled=finder.stats.search_disabled,
         dry_run=args.dry_run,
     )
     return 0

@@ -12,11 +12,13 @@ from .commands import (
     find_packs,
     imports,
     init,
+    process_batch,
     quick_dedupe,
     reorganize,
     sanitize_filenames,
     scan,
     serve,
+    sync_sources,
     tools,
 )
 from .config import load_env, resolve_catalog_path
@@ -28,8 +30,11 @@ from .observability import CallTracker, configure_wide_event_logs
 Handler = Callable[[argparse.Namespace, Path], int]
 
 _VERBS = {
+    "sync-sources": "Download and process registered sources serially.",
+    "sync-source": "Manage, authorize and inspect registered download sources.",
+    "process-batch": "Run the batch pipeline unattended and report the review backlog.",
     "import-source": "Register, authorize or check the Brendan OneDrive source.",
-    "import-run": "Resume a bounded folder-complete Brendan import.",
+    "import-run": "Retired: use sync-sources --source brendan.",
     "import-status": "Show import progress, unfinished folders and reviews.",
     "import-reviews": "Export unresolved importer reviews as JSON.",
     "import-review": "Resolve an importer-level review.",
@@ -67,8 +72,11 @@ def _not_implemented(args: argparse.Namespace, catalog_path: Path) -> int:
 
 
 _HANDLERS: dict[str, Handler] = {
+    "sync-sources": sync_sources.run,
+    "sync-source": sync_sources.source,
+    "process-batch": process_batch.run,
     "import-source": imports.source,
-    "import-run": imports.run,
+    "import-run": imports.retired_run,
     "import-status": imports.status,
     "import-reviews": imports.reviews,
     "import-review": imports.resolve,
@@ -116,6 +124,58 @@ def build_parser() -> argparse.ArgumentParser:
         name: subparsers.add_parser(name, help=help_text, parents=[common])
         for name, help_text in _VERBS.items()
     }
+    verbs["process-batch"].add_argument(
+        "--root", type=Path, required=True, help="Registered staging inbox to scan."
+    )
+    sync = verbs["sync-sources"]
+    sync.add_argument(
+        "--inbox",
+        type=Path,
+        required=True,
+        help="Existing registered staging root; source names become subfolders.",
+    )
+    sync.add_argument(
+        "--source",
+        action="append",
+        help="Named source to sync (repeatable); default: all enabled sources.",
+    )
+    sync.add_argument(
+        "--max-new-files",
+        type=int,
+        default=100,
+        help="Per-source manual-import threshold after hash exclusions (default: 100).",
+    )
+    sync.add_argument(
+        "--max-seconds",
+        type=int,
+        default=7200,
+        help="Discovery/copy budget per source; processing completes separately.",
+    )
+    sync.add_argument(
+        "--max-cache-bytes",
+        type=int,
+        default=20 * 1024**3,
+        help="Private staging byte limit per source (default: 20 GiB).",
+    )
+    registry = verbs["sync-source"]
+    registry.add_argument(
+        "action",
+        choices=["list", "add", "enable", "disable", "auth", "doctor", "status"],
+    )
+    registry.add_argument("name", nargs="?")
+    registry.add_argument("--provider", choices=["onedrive"], default="onedrive")
+    registry.add_argument("--account", help="Reusable account profile name.")
+    registry.add_argument("--drive-id")
+    registry.add_argument("--folder-id")
+    registry.add_argument("--client-id")
+    registry.add_argument("--token-cache", type=Path)
+    registry.add_argument(
+        "--authority", default="https://login.microsoftonline.com/consumers"
+    )
+    registry.add_argument(
+        "--scopes",
+        default="https://graph.microsoft.com/Files.Read.All https://graph.microsoft.com/User.Read",
+    )
     source = verbs["import-source"]
     source.add_argument("action", choices=["add", "auth", "doctor"])
     source.add_argument("name", choices=["brendan"])
