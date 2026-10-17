@@ -166,3 +166,47 @@ Verification (disposable catalogs; no production restart, processing or real ema
 The production launcher already uses this editable checkout, so new invocations
 receive the display. The owner's already-running parent was not stopped or changed;
 it keeps the old output behavior. No commit or merge was made for this follow-up.
+
+## Production filing failure and mail investigation — 2026-10-17
+
+Completed the fix for run `20261016T215633Z-6f62b4843472`. Claude parsed the skill's
+leading YAML `---` as an option because the full prompt was passed in argv. The
+prompt now goes through a private mode-0600 file on stdin. Agent stderr now uses
+`filing-agent-stderr.log`, preventing the worker traceback from overwriting the
+startup diagnostic in `filing-stderr.log`. Existing unattended options, progress,
+stdout JSON and owned-process cleanup remain intact.
+
+Read-only Gmail IMAP inspection found the exact Message-ID
+`<rpg-batch-20261016T215633Z-6f62b4843472@rpg-librarian.local>`, subject
+`RPG Librarian: failed; 750 review item(s)`, dated October 17 at 04:26:59 PDT.
+The sender and recipient are the same configured Gmail address. The message is
+unread in Sent/All Mail with only the Sent label, absent from Inbox, Spam and Trash
+at inspection. An earlier same-address RPG email has both Inbox and Sent labels;
+same-address sending alone does not explain this. No matching bounce was found
+by Message-ID text search in All Mail. IMAP exposes neither filter rules nor archive
+history, so the cause of the missing Inbox label remains unknown. Recommend finding
+and moving the message to Inbox, then checking Skip the Inbox filters and other
+clients' archive rules. No mail was resent, mailbox rules changed, or production
+batch rerun during this investigation.
+
+Future receipts retain sender, recipient, subject, Message-ID and SMTP acceptance
+time; abandoned-notification recovery preserves this metadata. Status `sent` means
+submission acceptance, not Inbox placement.
+
+Verification:
+
+- `/tmp/probe-filing-cli.py`: installed Claude parser, exact launch flags and full
+  prompt stdin accepted; an intentional invalid sentinel stopped before a model
+  call. Checked private prompt permissions and absence of the prompt in argv.
+- `/tmp/check-filing-stdin.py`: disposable real CLI/MCP/catalog writes and loopback
+  SMTP passed success, controlled startup failure, separate original agent stderr
+  and worker traceback, SMTP audit fields, safe rerun and 1 MiB file-backed stdin.
+  Artifacts `/tmp/rpg-batch-integration-cwsh2fue/`.
+- `/tmp/check-batch-recovery.py`: unknown input, shared lock, actual SIGTERM and
+  parent SIGKILL recovery/owned-agent cleanup passed again.
+- Application Ruff lint/format and ty checks passed; final `git diff --check` passed.
+  No unit tests or tooling added. No live Claude model run performed.
+
+Production's editable installation uses this fix on the next invocation. The work
+item is complete; provider Inbox placement and filter history remain outside the
+verified application behavior.

@@ -87,6 +87,7 @@ class Run:
                 notification = record.get("notification", {})
                 if notification.get("status") == "pending":
                     record["notification"] = {
+                        **notification,
                         "status": "unknown",
                         "reason": "delivery_interrupted",
                     }

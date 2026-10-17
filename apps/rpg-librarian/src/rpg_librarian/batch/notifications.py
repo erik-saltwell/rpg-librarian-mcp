@@ -6,7 +6,7 @@ from email.message import EmailMessage
 
 from ..imports.config import setting
 from ..smtp import send_message
-from .records import Run
+from .records import Run, now
 
 
 def notify(run: Run) -> bool:
@@ -32,6 +32,13 @@ def notify(run: Run) -> bool:
         total = str(backlog["total"]) if backlog is not None else "unknown"
         message["Subject"] = f"RPG Librarian: {data['outcome']}; {total} review item(s)"
         message["Message-ID"] = f"<rpg-batch-{data['run_id']}@rpg-librarian.local>"
+        data["notification"].update(
+            sender=str(message["From"]),
+            recipient=str(message["To"]),
+            subject=str(message["Subject"]),
+            message_id=str(message["Message-ID"]),
+        )
+        run.save()
         lines = [
             f"Outcome: {data['outcome']}",
             f"Catalog: {data['catalog']}",
@@ -54,10 +61,11 @@ def notify(run: Run) -> bool:
         lines.extend(["", f"Local run summary: {run.path}"])
         message.set_content("\n".join(lines) + "\n")
         send_message(message)
-        data["notification"] = {"status": "sent"}
+        # SMTP acceptance proves submission, not recipient Inbox placement.
+        data["notification"].update(status="sent", smtp_accepted_at=now())
         run.save()
         return True
     except Exception as error:
-        data["notification"] = {"status": "failed", "error_type": type(error).__name__}
+        data["notification"].update(status="failed", error_type=type(error).__name__)
         run.save()
         return False

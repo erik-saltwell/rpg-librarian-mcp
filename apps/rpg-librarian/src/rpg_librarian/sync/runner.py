@@ -87,6 +87,7 @@ def recover(catalog: Path, run_id: str) -> None:
                 if stage["outcome"] == "running":
                     stage.update(outcome="interrupted", finished_at=now())
             record["notification"] = {
+                **record.get("notification", {}),
                 "status": "unknown"
                 if record.get("notification", {}).get("status") == "pending"
                 else "skipped",
@@ -198,6 +199,7 @@ def process_source(
                         )
                 elif notification.get("status") == "pending":
                     previous_batch.data["notification"] = {
+                        **notification,
                         "status": "unknown",
                         "reason": "delivery_interrupted",
                     }

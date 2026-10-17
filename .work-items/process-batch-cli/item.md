@@ -25,3 +25,9 @@ show current activity, counts, elapsed/wait time, bounded error paths and final
 review/email status. Actual PTY, redirected-output, error and interruption checks
 passed; see progress.md for details. Status is complete. No live production batch or live-model run was started; no
 commit or merge was made.
+
+Production filing follow-up is complete: the full prompt now goes through stdin,
+and agent stderr is separate from the worker traceback. Parser and controlled
+CLI/MCP/SMTP checks passed. The historical failure email exists unread in Gmail
+Sent/All Mail without an Inbox label; the responsible rule or client is unknown.
+Future receipts retain mail headers and SMTP acceptance time. See progress.md.

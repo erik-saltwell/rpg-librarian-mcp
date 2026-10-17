@@ -94,3 +94,17 @@ version: private evidence existed, but a long stage appeared idle in the termina
   Pack/filing activity avoids invented fixed totals. Large-library display overhead
   and long live-agent sessions remain unmeasured; controlled integration verified
   the actual CLI/MCP/status boundary and 17-second lookup waiting behavior.
+
+## Filing and mail follow-up assessment — 2026-10-17
+
+Evaluated the completed fix against the unchanged approved rubric in intent.md.
+
+- **Ease of routine use:** invocation unchanged; installed parser accepts the full
+  skill through stdin. Live model execution remains unassessed.
+- **Dependable unattended execution:** controlled CLI/MCP success, failure and safe
+  rerun passed, along with actual SIGTERM/SIGKILL cleanup and recovery checks.
+- **Trustworthy review awareness:** captured SMTP verified failure notification and
+  audit metadata. Gmail contains the historical production message; Inbox placement
+  and the responsible rule/client remain unassessed.
+- **Diagnostic clarity:** agent stderr survives beside the worker traceback, and
+  receipts retain message identifiers and submission time for future mail tracing.

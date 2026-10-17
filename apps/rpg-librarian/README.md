@@ -347,6 +347,13 @@ have the `RPG_LIBRARIAN_` prefix). TLS is required, using `ssl` or `starttls`.
   and a failure email is attempted. Unavailable backlog counts are also unknown,
   never silently zero. A failed delivery remains visible in the summary.
 
+Notification receipts retain sender, recipient, subject, Message-ID and, after
+successful SMTP submission, `smtp_accepted_at`. Status `sent` means SMTP accepted
+the message; it does not confirm Inbox placement. Search All Mail by subject or
+Message-ID and check filters or other clients for archive rules if mail is missing.
+Filing sends its private mode-0600 `filing-prompt.txt` through stdin. Agent errors
+are in `filing-agent-stderr.log`; worker exceptions remain in `filing-stderr.log`.
+
 `review_backlog` is the shared MCP definition of outstanding review work. It covers
 flags, blocked moves, unresolved folder judgments and deferred organization
 findings. Entry flags and blocked moves count once in the total, but both category

@@ -7,7 +7,7 @@ import signal
 import subprocess
 import time
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from pathlib import Path
 
 
@@ -36,12 +36,17 @@ def execute(
     env: dict[str, str] | None = None,
     own_group: bool = True,
     on_tick: Callable[[], None] | None = None,
+    stdin: Path | None = None,
 ) -> int:
-    with stdout.open("wb") as out, stderr.open("wb") as err:
+    with ExitStack() as stack:
+        out = stack.enter_context(stdout.open("wb"))
+        err = stack.enter_context(stderr.open("wb"))
+        source = stack.enter_context(stdin.open("rb")) if stdin is not None else None
         stdout.chmod(0o600)
         stderr.chmod(0o600)
         with subprocess.Popen(
             command,
+            stdin=source,
             stdout=out,
             stderr=err,
             cwd=cwd,

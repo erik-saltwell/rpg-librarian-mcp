@@ -286,3 +286,17 @@ The owner observed that only stage names were visible during a production run.
   controlled network/agent/SMTP, slow work, errors, no work and interruptions.
   Run lint/types/format checks. No unit tests or live production run/restart.
 - [x] Document progress behavior and record completion/rubric evidence.
+
+## Production filing failure and email investigation
+
+- [x] Send the complete leading-dash skill prompt via private stdin input instead
+  of argv, preserving unattended options, progress and process cleanup.
+- [x] Give Claude a distinct stderr path so worker exceptions cannot overwrite its
+  startup failure, and point diagnostics at the correct file.
+- [x] Check the installed Claude parser without a model call, then verify real
+  CLI/MCP boundaries with a controlled agent and captured SMTP, including failure
+  and interruption. Preserve stdout JSON and decisions; no new unit-test suite.
+- [x] Trace historical failure notification eligibility, SMTP result, configuration
+  and relevant mailbox evidence using read-only access. Do not resend live mail or
+  expose secrets. Distinguish submission acceptance from inbox delivery.
+- [x] Record evidence, limits, documentation and final status.

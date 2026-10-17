@@ -110,10 +110,16 @@ The catalog is authoritative; your text cannot substitute for committed decision
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)
     env.pop("RPG_LIBRARIAN_IMPORT_MANIFEST", None)
+    prompt_path = directory / "filing-prompt.txt"
+    # Skill frontmatter starts with '---', which Claude parses as an option when
+    # passed positionally. File-backed stdin also avoids argv size/visibility limits.
+    with prompt_path.open("w", encoding="utf-8") as stream:
+        prompt_path.chmod(0o600)
+        stream.write(prompt)
+    agent_stderr = directory / "filing-agent-stderr.log"
     command = [
         executable,
         "-p",
-        prompt,
         "--tools",
         "",
         "--permission-mode",
@@ -177,15 +183,16 @@ The catalog is authoritative; your text cannot substitute for committed decision
         code = execute(
             command,
             stdout=output,
-            stderr=directory / "filing-stderr.log",
+            stderr=agent_stderr,
             cwd=Path(temp),
             env=env,
             own_group=False,
             on_tick=progress,
+            stdin=prompt_path,
         )
     if code:
         raise RuntimeError(
-            f"Agent filing exited {code}; see private filing-stderr.log."
+            f"Agent filing exited {code}; see private {agent_stderr.name}."
         )
     try:
         payload = json.loads(output.read_text())
