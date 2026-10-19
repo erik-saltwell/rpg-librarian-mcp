@@ -266,10 +266,22 @@ alone does not undo disk renames: use the matching journal if recovery is requir
 ## Visual inspection
 
 The MCP `view_file` tool returns an image for the agent's own vision capabilities,
-with source and dimension metadata. Use `entry_id` for a loose image or PDF; PDF
+with source and dimension metadata. Use `entry_id` for a loose image, PDF or Illustrator (.ai) file; PDF/AI
 `page` numbers start at 1 and default to the first page. For a pack, additionally
 select `member_path` using a member's root-relative `relative_path` and `root_id`
 from `report-pack`. It resolves the current catalog location, never arbitrary paths.
+
+Illustrator files render their saved PDF artwork with MuPDF, or legacy PostScript
+artwork with Ghostscript (`gs` on PATH; Debian/Ubuntu package `ghostscript`). This
+also works with older/generic catalog classifications. Select a page with `page`;
+PostScript page counts are reported as unknown (`null`). Rendering does not expose
+editable layers or hidden objects. Native-only AI content still requires re-saving
+with **Create PDF Compatible File** or exporting a PDF/image.
+
+Ghostscript runs with `-dSAFER`, no interactive input, bounded preview dimensions,
+private temporary output and a 40-second subprocess timeout inside the existing
+60-second disposable worker. Missing Ghostscript, invalid bounding boxes, missing
+pages and rendering failures return tool errors. Source files remain unchanged.
 
 One preview is returned per call: JPEG, default longest edge 1600 pixels,
 `max_edge` from 512 to 2400. Images use the first frame, EXIF orientation and white

@@ -25,13 +25,17 @@ def register(mcp: FastMCP, catalog: Path) -> None:
         root_id: int | None = None,
         max_edge: int = 1600,
     ) -> list[TextContent | ImageContent]:
-        """Look at a cataloged image or one PDF page using your own vision.
+        """Look at an image, PDF page or Illustrator (.ai) artwork using your vision.
 
         For a loose file pass entry_id. For a pack, also pass member_path equal to
         a member's root-relative relative_path from report-pack, plus root_id when
         ambiguous. Arbitrary filesystem paths are not accepted.
 
-        PDF page numbers start at 1 (default: first page); omit page for images.
+        PDF/Illustrator page numbers start at 1 (default: first page); omit page for
+        images. Illustrator files use saved PDF artwork, or Ghostscript (gs) for
+        legacy PostScript artwork. Neither exposes editable layers/hidden objects.
+        PostScript previews report page_count=null when the count is unknown;
+        missing Ghostscript or unsupported native-only AI content returns an error.
         Returns source/page/dimension metadata AND actual image content, not a path.
         Previews are JPEGs bounded by max_edge (512..2400; default 1600 pixels).
         Images use the first frame, correct orientation, and a white background.
