@@ -569,7 +569,36 @@ retired. For example, a user-managed nightly scheduler can invoke:
 /home/eriksalt/data/rpg-librarian/sync-sources.zsh
 ```
 
-Configure the scheduler's PATH and mounts so the CLI and inbox are reachable, and
-sign in interactively beforehand. No scheduler is installed or enabled by this
-change. Wrapper checks use a stand-in executable and masked SMTP configuration;
-verification does not require importing production content or sending live mail.
+Production uses the systemd user units in `scripts/systemd/`, installed under
+`~/.config/systemd/user/`. The timer runs at **03:00 America/Los_Angeles**, catches
+missed runs after startup/resume, and does not wake a sleeping machine. User
+lingering must be enabled to run while logged out (already enabled on this host).
+
+The service runs the CLI directly from `~/data/rpg-librarian`, with an explicit
+PATH for Claude, the editable app installation and system tools. It uses the app's
+existing `.env`, source registry and signed-in accounts. It verifies that the inbox
+is writable and on the mounted CIFS share before running. A mount/preflight failure
+appears in the journal before the app starts, so no application email is sent for
+that failure. App notification policies and the default 100-file threshold apply
+normally once the CLI starts. Sign in interactively before unattended operation.
+
+Long runs have no startup time limit. The same service cannot overlap itself; the
+catalog lock also protects against simultaneous manual batch/sync jobs. Failed runs
+are not automatically retried in a loop. Output goes to the journal; application
+receipts remain in `~/data/rpg-librarian/logs/sync-sources/`.
+
+```bash
+# Install/update from the source checkout, then enable the nightly timer:
+mkdir -p ~/.config/systemd/user
+cp scripts/systemd/rpg-librarian-sync.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now rpg-librarian-sync.timer
+
+# Schedule, recent output, and optional manual execution:
+systemctl --user list-timers rpg-librarian-sync.timer
+journalctl --user -u rpg-librarian-sync.service -n 100 --no-pager
+systemctl --user start rpg-librarian-sync.service
+
+# Disable future scheduled runs (does not stop an active run):
+systemctl --user disable --now rpg-librarian-sync.timer
+```

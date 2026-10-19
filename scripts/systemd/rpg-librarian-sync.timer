@@ -1,0 +1,11 @@
+[Unit]
+Description=Sync RPG Librarian sources nightly at 3 AM Pacific
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 America/Los_Angeles
+Persistent=true
+AccuracySec=1min
+Unit=rpg-librarian-sync.service
+
+[Install]
+WantedBy=timers.target

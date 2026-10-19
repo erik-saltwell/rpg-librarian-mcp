@@ -1,0 +1,21 @@
+[Unit]
+Description=Sync RPG Librarian sources and process incoming content
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/data/rpg-librarian
+Environment="PATH=%h/.local/bin:%h/proj/rpg-librarian-mcp/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONFAULTHANDLER=1
+UMask=0077
+# Resolve the automount before checking for the actual network filesystem.
+ExecStartPre=/usr/bin/test -d /phinneas/rpg/inbox
+ExecStartPre=/usr/bin/findmnt --noheadings --raw --types cifs --target /phinneas/rpg/inbox --output TARGET
+ExecStartPre=/usr/bin/test -w /phinneas/rpg/inbox
+ExecStart=%h/.local/bin/rpg-librarian sync-sources --catalog %h/data/rpg-librarian/catalog.db --inbox /phinneas/rpg/inbox
+TimeoutStartSec=infinity
+TimeoutStopSec=90s
+KillMode=mixed
+Restart=no
+StandardOutput=journal
+StandardError=journal
