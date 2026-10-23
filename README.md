@@ -190,6 +190,11 @@ Failures do not stop other sources; one combined failure email is sent at the en
 Unfinished admitted batches resume automatically. Existing Brendan registrations and
 history are adopted; `import-run` is retired with migration guidance.
 
+OneDrive discovery tracks changes incrementally. Verified ownership links let
+unchanged nightly runs check the known local copies without rebuilding the inbox
+inventory or rereading contents. Full ownership matching runs weekly, or on demand
+with `--full-reconcile`; changed or missing copies are rechecked immediately.
+
 See [source registration, accounts and recovery](apps/rpg-librarian/README.md#sync-download-sources)
 for setup, hash verification costs, notification rules and nightly scheduling examples.
 OneDrive is the first provider adapter; Google Drive and Dropbox are not implemented.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import signal
 import time
 import traceback
@@ -10,6 +11,8 @@ import uuid
 from pathlib import Path
 
 from sqlmodel import select
+
+from rpg_librarian_tools.onedrive import TRANSIENT, GraphError
 
 from ..batch.notifications import notify as notify_batch
 from ..batch.processes import stop_abandoned
@@ -102,6 +105,34 @@ def process_source(
     valid_name(name)
     state = State(registry.catalog, name)
     provider = None
+    result["phase"] = "recovery"
+
+    def diagnostic(event: dict) -> None:
+        record = {"timestamp": now(), "source": name, "phase": result["phase"], **event}
+        log_path = Path(args.receipt).parent / f"{name}-requests.jsonl"
+        # Run directory is private; exclusive creation sets private file permissions.
+        descriptor = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(descriptor, "a") as log:
+            log.write(json.dumps(record) + "\n")
+        result["request_log"] = str(log_path)
+        result["last_request"] = record
+        counter = (
+            "token_events" if event["operation"] == "token" else "request_attempts"
+        )
+        result[counter] = result.get(counter, 0) + 1
+        if event["outcome"] in {"retry", "refresh_token", "failed"}:
+            result["retry_events"] = result.get("retry_events", 0) + (
+                event["outcome"] in {"retry", "refresh_token"}
+            )
+            save()
+            print(
+                f"{name}: {event['operation']} {event['outcome']} "
+                f"(HTTP {event.get('status', 'n/a')}, "
+                f"attempt {event.get('attempt', 'n/a')}); "
+                f"diagnostics: {log_path}",
+                flush=True,
+            )
+
     deadline = time.monotonic() + args.max_seconds
     try:
         identity = {
@@ -213,7 +244,8 @@ def process_source(
                 save()
                 return
         if not (admission and admission["status"] == "processing"):
-            provider = open_provider(registry, source, state, deadline)
+            result["phase"] = "discovery"
+            provider = open_provider(registry, source, state, deadline, diagnostic)
         ingestion = Ingestion(
             name, state, provider, inbox, args.max_cache_bytes, deadline, result, save
         )
@@ -225,7 +257,11 @@ def process_source(
             return
         assert provider is not None
         items = provider.observe()
-        pending = ingestion.classify(registry.catalog, items)
+        pending = ingestion.classify(
+            registry.catalog,
+            items,
+            full_reconcile=getattr(args, "full_reconcile", False),
+        )
         if not pending:
             state.set("sync_manual_notice", {})
             state.db.commit()
@@ -263,6 +299,8 @@ def finish(
         ingestion.state.set("sync_admission", admission)
         ingestion.checkpoint()
 
+    result["phase"] = "processing"
+    save()
     code = _run_batch_locked(
         catalog, ingestion.inbox, source=ingestion.name, prepared=prepared
     )
@@ -367,7 +405,30 @@ def run(args, catalog: Path) -> int:
                         save,
                     )
                 except Exception as error:
-                    result.update(outcome="failed", error_type=type(error).__name__)
+                    retryable = isinstance(error, (TimeoutError, ConnectionError)) or (
+                        isinstance(error, GraphError) and error.status in TRANSIENT
+                    )
+                    count = 0
+                    if retryable:
+                        with_source = State(catalog, name)
+                        try:
+                            count = with_source.get("sync_consecutive_deferrals", 0) + 1
+                            with_source.set("sync_consecutive_deferrals", count)
+                            with_source.db.commit()
+                        finally:
+                            with_source.close()
+                    deferred = retryable and count < 3
+                    result.update(
+                        outcome="deferred" if deferred else "failed",
+                        error_type=type(error).__name__,
+                        retryable=retryable,
+                        consecutive_deferrals=count if retryable else 0,
+                    )
+                    if retryable:
+                        result["next_action"] = (
+                            "Resume on the next scheduled run or rerun sync-sources; "
+                            "saved proofs and verified downloads are retained."
+                        )
                     # Frame locations without locals, tokens or raw HTTP messages.
                     result["traceback"] = traceback.format_tb(error.__traceback__)
                     result["error"] = (
@@ -379,19 +440,33 @@ def run(args, catalog: Path) -> int:
                         else type(error).__name__
                     )
                     print(
-                        f"Source failed: {name} ({result['error_type']}); continuing.",
+                        f"Source {result['outcome']}: {name} "
+                        f"({result['error_type']}); continuing.",
                         flush=True,
                     )
+                else:
+                    with_source = State(catalog, name)
+                    try:
+                        with_source.set("sync_consecutive_deferrals", 0)
+                        with_source.db.commit()
+                    finally:
+                        with_source.close()
                 finally:
                     result["finished_at"] = now()
                     save()
             run_record["outcome"] = (
                 "failed"
                 if any(r["outcome"] == "failed" for r in run_record["sources"])
+                else "deferred"
+                if any(r["outcome"] == "deferred" for r in run_record["sources"])
                 else "completed"
             )
             delivered = failures(run_record, str(path), save)
-            code = 0 if run_record["outcome"] == "completed" and delivered else 1
+            code = (
+                0
+                if run_record["outcome"] in {"completed", "deferred"} and delivered
+                else 1
+            )
     except KeyboardInterrupt as error:
         run_record["outcome"] = "interrupted"
         for result in run_record["sources"]:

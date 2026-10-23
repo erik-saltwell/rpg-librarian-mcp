@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
 
 from rpg_librarian_tools.onedrive import OneDrive
 
+from ..batch.records import now
 from ..errors import UsageError
-from ..imports.auth import token
+from ..imports.auth import TokenProvider
 from ..imports.discovery import content_version, discover
 from ..imports.state import State
 from ..infrastructure.walk import is_filtered
@@ -37,11 +39,56 @@ class Provider(Protocol):
 
 
 class OneDriveProvider:
-    def __init__(self, registry: Registry, source: dict, state: State, deadline: float):
+    def __init__(
+        self,
+        registry: Registry,
+        source: dict,
+        state: State,
+        deadline: float,
+        diagnostic: Callable[[dict], None] | None = None,
+    ):
         config = registry.config(source)
-        self.client = OneDrive(token(config), config.drive, config.root, deadline)
+        self.credentials = TokenProvider(config)
+        self.diagnostic = diagnostic
+        self.client = OneDrive(
+            self.access_token,
+            config.drive,
+            config.root,
+            deadline,
+            refresh_token=lambda: self.access_token(force_refresh=True),
+            diagnostic=diagnostic,
+        )
         self.state, self.deadline = state, deadline
         self.checked_parents: set[str] = set()
+
+    def access_token(self, *, force_refresh: bool = False) -> str:
+        previous = self.credentials.expires_at
+        try:
+            value = self.credentials.get(force_refresh=force_refresh)
+        except Exception as error:
+            if self.diagnostic:
+                self.diagnostic(
+                    {
+                        "operation": "token",
+                        "outcome": "failed",
+                        "error_type": type(error).__name__,
+                        "force_refresh": force_refresh,
+                    }
+                )
+            raise
+        if self.diagnostic and (
+            previous != self.credentials.expires_at or force_refresh
+        ):
+            self.diagnostic(
+                {
+                    "operation": "token",
+                    "outcome": "completed",
+                    "force_refresh": force_refresh,
+                    "expires_at_epoch": self.credentials.expires_at,
+                    "renewed_at": now(),
+                }
+            )
+        return value
 
     def observe(self) -> list[RemoteFile]:
         if "folder" not in self.client.metadata(self.client.root):
@@ -119,8 +166,12 @@ PROVIDERS = {"onedrive": OneDriveProvider}
 
 
 def open_provider(
-    registry: Registry, source: dict, state: State, deadline: float
+    registry: Registry,
+    source: dict,
+    state: State,
+    deadline: float,
+    diagnostic: Callable[[dict], None] | None = None,
 ) -> Provider:
     if source["provider"] not in PROVIDERS:
         raise UsageError(f"Unsupported source provider: {source['provider']}")
-    return PROVIDERS[source["provider"]](registry, source, state, deadline)
+    return PROVIDERS[source["provider"]](registry, source, state, deadline, diagnostic)

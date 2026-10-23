@@ -511,6 +511,36 @@ Unchanged versions reuse verified source digests and local hashing caches with
 size/inode/nanosecond modification/change-time checks. First reconciliation of an
 old metadata-matched source can be expensive; old guesses are not trusted proofs.
 
+OneDrive discovery uses its saved delta cursor to fetch changes, rather than
+requesting each remote file every night. Exact local ownership links are saved in
+`imports/<source>.sqlite3` against the remote item ID and content version. After the
+first classification establishes these links, an unchanged nightly run checks each
+linked copy's current filesystem signature directly. It does not build the broader
+candidate inventory or read unchanged file contents. Catalog file IDs let these
+links follow normal catalog-tracked moves and reorganizations.
+
+A changed signature requires hash verification. A missing, changed or unsafe copy,
+an unfamiliar remote version, or pending/unresolved work triggers broader matching
+for the affected file sizes. Pending results are never cached as permanent
+exclusions: a manual local copy added later must still be discovered. A fully linked
+unchanged source avoids the inbox walk; a source with pending work may still need
+one. Remote changes and local changes are both considered, so an unchanged OneDrive
+folder does not conceal a deleted local copy.
+
+Full ownership matching runs automatically every seven days. Use
+`sync-sources --catalog PATH --inbox ROOT --full-reconcile` to force it sooner. This
+rechecks the complete current source inventory against local candidates while
+retaining valid content proofs and precise-signature hash caches; it does not force
+remote redownloads or byte hashing of unchanged copies. Interrupted reconciliation
+retains completed links and resumes its original reconciliation checkpoint. Its
+completion time advances only after classification finishes without unresolved
+files. OneDrive delta discovery remains independent of this ownership reconciliation.
+
+The run summary reports `classification_mode`, `ownership_reused`,
+`ownership_reclassified`, `local_inventory_built`, `local_candidates_indexed`,
+`local_hashed_bytes` and `classification_seconds`, so a quiet run's remaining cost
+can be distinguished from initial matching and changed-file work.
+
 Underscore folders/descendants, root organizing catalogs, `_index.md` and remote
 shortcuts retain the OneDrive discovery exclusions. Hidden and agent-context paths
 that the local scanner excludes are ignored. Remote removal never deletes local
@@ -529,7 +559,8 @@ The filing agent receives the source namespace as provenance context.
 Completed runs retain normal shared review-backlog reporting: the count covers all
 four review queues across the catalog. Clean completed processing with zero reviews
 sends no routine email; the shared no-new-input suppression still applies. Source
-and batch failures, including zero-new-file failures, go into the combined end-of-run
+and permanent or repeated transient failures, including zero-new-file failures, go
+into the combined end-of-run
 failure message rather than separate batch failure emails. Mail uses the existing
 `RPG_LIBRARIAN_SMTP_*` and `RPG_LIBRARIAN_REVIEW_EMAIL_TO` configuration. Failed delivery
 is persisted and returns nonzero. SMTP acceptance followed by a crash has uncertain
@@ -542,6 +573,31 @@ Back up the registry, source journals, catalog and token caches together. Keep s
 on a local filesystem, not the SMB content share. Every run, including idle and
 manual-required checks, saves `logs/sync-sources/<run-id>/summary.json`, with counts,
 manifest, bytes, publication state, errors, delivery outcomes and linked batch logs.
+
+Graph requests and redirected content transfers make up to five attempts for 429,
+transient 5xx and connection failures. Transfers restart safely with a fresh download
+URL after interrupted/short streams; retry delays honor `Retry-After` seconds or
+HTTP dates, use exponential backoff with jitter, and respect the source deadline.
+Credentials renew silently before expiry; Graph 401 triggers one forced renewal and
+retry. Persistent sign-in failures remain actionable failures.
+
+Request records are written to private `<source>-requests.jsonl` files alongside the
+summary. They identify source/phase/operation/item, HTTP status, safe service error
+codes, request IDs, attempt, duration, byte counts and retry delays. Token records
+include expiry and renewal outcome, never token contents. Signed download URLs,
+authorization headers and raw response bodies are excluded. The summary records
+classification progress, unresolved items, local hashing cost, last request and
+request-log location, even if classification fails.
+
+An isolated exhausted transfer does not stop classification of other files. Any
+unresolved item blocks admission of the entire source; three consecutive exhausted
+files pause the source to avoid hammering an unavailable service. Temporary outages
+and source-budget exhaustion produce a `deferred` outcome with saved progress and
+exit zero for the first two consecutive runs. The existing timer retries on its next
+scheduled invocation; a manual rerun also resumes progress. The third consecutive
+deferral (and each subsequent one until recovery) becomes `failed`, returns nonzero,
+and joins the combined failure notification. A successful source lifecycle resets
+the deferral count. A deferred receipt is not a completed source sync.
 
 Small-batch admission and each published file are journaled. Rerunning resumes an
 unfinished admitted batch **before** the zero-new-files decision, even if the source

@@ -8,6 +8,7 @@
 | Clean trash and compact catalog | complete | [.work-items/clean-trash/](.work-items/clean-trash/) |
 | Entry table refactor | complete | [.work-items/entry-table/](.work-items/entry-table/) |
 | extract from brendan | complete | [.work-items/extract-from-brendan/](.work-items/extract-from-brendan/) |
+| Incremental source ownership classification | complete | [.work-items/incremental-source-classification/](.work-items/incremental-source-classification/) |
 | Library organization and cleanup skill | complete | [.work-items/library-organization-skill/](.work-items/library-organization-skill/) |
 | Pack migration | complete | [.work-items/pack-migration/](.work-items/pack-migration/) |
 | Per-pack Google lookup for asset media | complete | [.work-items/per-pack-google-lookup/](.work-items/per-pack-google-lookup/) |
@@ -16,4 +17,5 @@
 | Refactor rpg-librarian to new app | complete | [.work-items/rpg-librarian-app-refactor/](.work-items/rpg-librarian-app-refactor/) |
 | RPG software product type | complete | [.work-items/rpg-software/](.work-items/rpg-software/) |
 | Sanitize library filenames | complete | [.work-items/sanitize-library-filenames/](.work-items/sanitize-library-filenames/) |
+| Recover nightly sync and improve source resilience | implementing | [.work-items/sync-source-resilience/](.work-items/sync-source-resilience/) |
 | Travel guide product type | complete | [.work-items/travel-guides/](.work-items/travel-guides/) |

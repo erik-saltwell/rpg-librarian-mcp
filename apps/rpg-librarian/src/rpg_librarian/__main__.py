@@ -157,6 +157,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=20 * 1024**3,
         help="Private staging byte limit per source (default: 20 GiB).",
     )
+    sync.add_argument(
+        "--full-reconcile",
+        action="store_true",
+        help="Force full ownership matching (automatically runs every seven days).",
+    )
     registry = verbs["sync-source"]
     registry.add_argument(
         "action",

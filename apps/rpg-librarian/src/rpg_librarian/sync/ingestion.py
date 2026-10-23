@@ -9,12 +9,14 @@ import time
 import uuid
 from pathlib import Path
 
+from rpg_librarian_tools.onedrive import TRANSIENT, GraphError
+
 from ..batch.records import now
 from ..errors import UsageError
 from ..imports.state import State
 from ..imports.transfer import destination_path, file_hash
 from ..services.file_moves import rename_no_replace
-from .ownership import Ownership
+from .ownership import Match, Ownership
 from .providers import Provider, RemoteFile
 
 
@@ -58,6 +60,13 @@ class Ingestion:
             "remote_id,version,sha256 FROM revision WHERE sha256 IS NOT "
             "NULL AND (method='sha256' OR status IN "
             "('publishing','published','processed'))"
+        )
+        state.db.execute(
+            "CREATE TABLE IF NOT EXISTS sync_ownership("
+            "remote_id TEXT NOT NULL, version TEXT NOT NULL, sha256 TEXT NOT NULL, "
+            "root_id INTEGER NOT NULL, file_id INTEGER, local_path TEXT NOT NULL, "
+            "signature TEXT NOT NULL, reconciled_at REAL NOT NULL, "
+            "PRIMARY KEY(remote_id,version))"
         )
         state.db.commit()
 
@@ -106,6 +115,7 @@ class Ingestion:
         self, item: RemoteFile, protected: set[Path] | None = None
     ) -> tuple[Path, str]:
         self.check_time()
+        self.result["current_item"] = item.record()
         path, digest = self.cached(item), self.proof(item)
         if path.exists():
             if (
@@ -114,6 +124,7 @@ class Ingestion:
                 and digest
                 and file_hash(path) == digest
             ):
+                self.result["cache_hits"] = self.result.get("cache_hits", 0) + 1
                 return path, digest
             path.unlink()
         self.make_space(item.size, protected or set())
@@ -144,36 +155,165 @@ class Ingestion:
         finally:
             partial.unlink(missing_ok=True)
 
-    def classify(self, catalog: Path, items: list[RemoteFile]) -> list[RemoteFile]:
-        self.result.update(observed=len(items), owned=0, pending=None)
-        ownership = Ownership(
-            catalog, self.inbox, {item.size for item in items}, self.deadline
+    def remember_match(
+        self, item: RemoteFile, match: Match, digest: str, reconciled_at: float
+    ) -> None:
+        self.state.db.execute(
+            "INSERT INTO sync_ownership VALUES(?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(remote_id,version) DO UPDATE SET "
+            "sha256=excluded.sha256,root_id=excluded.root_id,file_id=excluded.file_id,"
+            "local_path=excluded.local_path,signature=excluded.signature,"
+            "reconciled_at=max(sync_ownership.reconciled_at,excluded.reconciled_at)",
+            (
+                item.identity,
+                item.version,
+                digest,
+                match.root_id,
+                match.file_id,
+                str(match.path),
+                match.signature,
+                reconciled_at,
+            ),
         )
+
+    def classify(
+        self, catalog: Path, items: list[RemoteFile], *, full_reconcile: bool = False
+    ) -> list[RemoteFile]:
+        started = time.monotonic()
+        now_epoch = time.time()
+        last_full = self.state.get("sync_last_full_reconcile", 0)
+        epoch = self.state.get("sync_reconcile_started", 0)
+        if not epoch and (full_reconcile or now_epoch - last_full >= 7 * 86400):
+            epoch = now_epoch
+            self.state.set("sync_reconcile_started", epoch)
+            self.state.db.commit()
+        bindings = {
+            (row["remote_id"], row["version"]): dict(row)
+            for row in self.state.db.execute("SELECT * FROM sync_ownership")
+        }
+        self.result.update(
+            phase="classification",
+            observed=len(items),
+            examined=0,
+            owned=0,
+            pending=None,
+            pending_so_far=0,
+            unresolved=0,
+            unresolved_items=[],
+            classification_mode="full" if epoch else "incremental",
+            ownership_reused=0,
+            ownership_reclassified=0,
+        )
+        self.save()
+        ownership = Ownership(catalog, self.inbox, set(), self.deadline)
         try:
             pending = []
+            unmatched = []
             for item in items:
+                self.result["current_item"] = item.record()
                 self.check_time()
                 destination_path(self.inbox / self.name, item.path)
-                # Hidden paths cannot be processed by the shared scanner.
                 if any(part.startswith(".") for part in Path(item.path).parts):
                     raise UsageError(
                         "Source contains a hidden path that the batch scanner cannot "
                         "process."
                     )
+                binding = bindings.get((item.identity, item.version))
+                match = None
+                if binding and (not epoch or binding["reconciled_at"] >= epoch):
+                    match = ownership.confirm(binding, item.size)
+                if match and binding:
+                    if (
+                        str(match.path) != binding["local_path"]
+                        or match.signature != binding["signature"]
+                        or match.root_id != binding["root_id"]
+                        or match.file_id != binding["file_id"]
+                    ):
+                        self.remember_match(
+                            item, match, binding["sha256"], binding["reconciled_at"]
+                        )
+                    self.result["owned"] += 1
+                    self.result["ownership_reused"] += 1
+                    self.result["examined"] += 1
+                    if self.result["examined"] % 100 == 0:
+                        self.checkpoint()
+                else:
+                    unmatched.append(item)
+            ownership.sizes = {item.size for item in unmatched}
+            consecutive_failures = 0
+            for item in unmatched:
+                self.result["ownership_reclassified"] += 1
+                self.result["current_item"] = item.record()
+                self.check_time()
                 digest = self.proof(item)
                 if digest is None and ownership.has_candidates(item.size):
-                    _, digest = self.download(item)
-                if digest and ownership.match(digest, item.size):
+                    try:
+                        _, digest = self.download(item)
+                    except (GraphError, ConnectionError) as error:
+                        if (
+                            isinstance(error, GraphError)
+                            and error.status not in TRANSIENT
+                        ):
+                            raise
+                        self.result["unresolved"] += 1
+                        if len(self.result["unresolved_items"]) < 100:
+                            self.result["unresolved_items"].append(
+                                {
+                                    **item.record(),
+                                    "error_type": type(error).__name__,
+                                    "status": getattr(error, "status", None),
+                                }
+                            )
+                        self.result["examined"] += 1
+                        consecutive_failures += 1
+                        self.save()
+                        if consecutive_failures >= 3:
+                            raise ConnectionError(
+                                "Three consecutive files exhausted transfer retries; "
+                                "source paused, progress saved, nothing admitted."
+                            ) from None
+                        continue
+                match = ownership.match(digest, item.size) if digest else None
+                if match and digest:
+                    self.remember_match(item, match, digest, epoch or now_epoch)
                     self.result["owned"] += 1
                 else:
+                    self.state.db.execute(
+                        "DELETE FROM sync_ownership WHERE remote_id=? AND version=?",
+                        (item.identity, item.version),
+                    )
                     pending.append(item)
+                consecutive_failures = 0
+                self.result["examined"] += 1
+                self.result["pending_so_far"] = len(pending)
+                if self.result["examined"] % 100 == 0:
+                    self.checkpoint()
+            if self.result["unresolved"]:
+                raise ConnectionError(
+                    f"Classification has {self.result['unresolved']} "
+                    "unresolved file(s); "
+                    "nothing admitted. Verified progress saved for the next run."
+                )
+            self.result.pop("current_item", None)
+            if epoch:
+                self.state.set("sync_last_full_reconcile", time.time())
+                self.state.set("sync_reconcile_started", 0)
             self.result.update(
                 pending=len(pending), local_hashed_bytes=ownership.hashed_bytes
             )
             self.save()
             return pending
         finally:
-            ownership.close()
+            self.result.update(
+                local_hashed_bytes=ownership.hashed_bytes,
+                local_inventory_built=ownership.inventory_built,
+                local_candidates_indexed=ownership.indexed_files,
+                classification_seconds=round(time.monotonic() - started, 3),
+            )
+            try:
+                self.checkpoint()
+            finally:
+                ownership.close()
 
     def admit(self, items: list[RemoteFile]) -> dict:
         admission = {
@@ -189,6 +329,8 @@ class Ingestion:
         return admission
 
     def publish(self, admission: dict) -> None:
+        self.result["phase"] = "publication"
+        self.save()
         if admission["inbox"] != str(self.inbox):
             raise UsageError(
                 "Unfinished batch belongs to a different inbox; resume using "

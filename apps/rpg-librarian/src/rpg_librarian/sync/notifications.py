@@ -82,6 +82,13 @@ def failures(run: dict, receipt: str, save) -> bool:
                 f"- {result['name']}: "
                 f"{result.get('error', result.get('error_type', 'Failed'))}"
             )
+            if result.get("request_log"):
+                lines.append(f"  Request diagnostics: {result['request_log']}")
+            if result.get("consecutive_deferrals", 0) >= 3:
+                lines.append(
+                    "  Repeated temporary failures: "
+                    f"{result['consecutive_deferrals']} consecutive runs."
+                )
             if result.get("batch_summary"):
                 lines.append(f"  Processing summary: {result['batch_summary']}")
                 if result.get("backlog") is not None:
