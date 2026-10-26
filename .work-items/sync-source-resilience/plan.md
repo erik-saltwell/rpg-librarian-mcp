@@ -20,9 +20,10 @@ imports/brendan.sqlite3, content proofs, local hash cache, and verified download
 - [x] Record classification progress and unresolved items; continue after isolated
   exhausted transfers, stop after three consecutive exhausted files, and never
   admit incomplete classification.
-- [x] Mark temporary failures/budget exhaustion deferred for the next scheduled run;
-  escalate the third consecutive deferral to a failed run and combined notification.
-  Permanent failures retain immediate failure reporting. Success resets deferrals.
+- [x] Mark temporary service failures deferred for the next scheduled run;
+  escalate the third consecutive service failure to a failed run and combined
+  notification. Permanent failures retain immediate failure reporting. Success
+  resets deferrals. Budget exhaustion is always quiet (October 25 follow-up below).
 - [x] Verify controlled transport faults, credential renewal, classification safety,
   escalation, existing source lifecycle behavior, Ruff, types and diff checks.
 - [x] Start the production service using the preserved state, inspect live diagnostics,
@@ -73,3 +74,37 @@ The service continues independently. Full live classification, live token renewa
 and recovery from a real remote outage remain operationally unverified. The next
 existing nightly timer is October 24 at 03:00 PDT. No timer changes, commits, or
 remote publication were performed.
+
+## October 25 notification follow-up
+
+The screenshot's October 23 03:46 email came from an HTTP 503 content failure
+before the resilience changes. The recovery run and October 24 run then deferred
+quietly on their budgets. October 25 incorrectly escalated ordinary budget
+exhaustion to a failure email after three deferrals. Classification was progressing:
+12,190, then 16,052, then 21,654 examined out of 31,314 observed; zero unresolved
+items or publications in these receipts. This was not evidence of a stalled source.
+
+- [x] Introduce `SourceBudgetExceeded`, a `TimeoutError` subtype, for explicit
+  deadlines in OneDrive requests/backoff, discovery, classification, publication
+  validation, and local ownership verification.
+- [x] Always defer budget pauses without email/nonzero exit, and reset the service
+  failure streak. Record `deferral_reason=source_budget_reached`. Preserve third-run
+  escalation for actual temporary service failures and immediate permanent alerts.
+- [x] Update the operator README and verify with a disposable catalog and mocked
+  source/SMTP boundaries: five consecutive budget pauses send nothing; three HTTP
+  503 failures escalate; a budget pause clears an existing failure streak; HTTP 403
+  alerts immediately; success resets the counter. Actual OneDrive deadline and
+  backoff methods emit the new exception. No real email was sent by verification.
+- [x] Ruff lint/format, full `ty check`, and `git diff --check` pass.
+
+The enabled timer's next trigger is October 26 at 03:00 PDT. Its launcher resolves
+to this editable checkout, so the next run picks up the change. No production run
+was started for this follow-up. Final live classification and admission/manual
+notification remain pending; this broader recovery item remains implementing.
+
+Quality evidence against the linked source-sync intent: appropriate owner
+involvement improves by keeping routine deadline pauses quiet while retaining
+persistent-service and permanent-error alerts. Safe continuity is supported by
+unchanged durable journals and observed increasing live classification progress.
+Correct recognition, overall nightly efficiency, and downstream workflow completion
+were not re-assessed by this notification-only follow-up.

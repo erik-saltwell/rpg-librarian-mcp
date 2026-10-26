@@ -55,3 +55,7 @@ class RemoteServiceError(ToolError):
         self.status_code = status_code
         self.retryable = retryable
         super().__init__(service, status_code, retryable)
+
+
+class SourceBudgetExceeded(TimeoutError):
+    """A resumable source operation reached its configured run deadline."""

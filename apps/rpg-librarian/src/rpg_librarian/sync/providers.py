@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
 
+from rpg_librarian_tools.errors import SourceBudgetExceeded
 from rpg_librarian_tools.onedrive import OneDrive
 
 from ..batch.records import now
@@ -94,7 +95,9 @@ class OneDriveProvider:
         if "folder" not in self.client.metadata(self.client.root):
             raise RuntimeError("Registered source is no longer a folder.")
         if not discover(self.state, self.client, self.deadline):
-            raise TimeoutError("Source discovery is incomplete; nothing admitted.")
+            raise SourceBudgetExceeded(
+                "Source discovery is incomplete; nothing admitted."
+            )
         return [
             RemoteFile(r["id"], r["version"], r["path"], r["size"])
             for r in self.state.db.execute(
@@ -105,7 +108,7 @@ class OneDriveProvider:
 
     def validate(self, item: RemoteFile) -> None:
         if time.monotonic() >= self.deadline:
-            raise TimeoutError("Source time budget reached; progress saved.")
+            raise SourceBudgetExceeded("Source time budget reached; progress saved.")
         actual = self.client.metadata(item.identity)
         row = self.state.db.execute(
             "SELECT data FROM remote WHERE id=?", (item.identity,)

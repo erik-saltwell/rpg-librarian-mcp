@@ -12,6 +12,8 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
+from rpg_librarian_tools.errors import SourceBudgetExceeded
+
 from ..db import readonly_connection
 from ..errors import UsageError
 from ..imports.transfer import file_hash
@@ -178,7 +180,7 @@ class Ownership:
 
     def check_time(self) -> None:
         if time.monotonic() >= self.deadline:
-            raise TimeoutError(
+            raise SourceBudgetExceeded(
                 "Local ownership verification reached the source time budget."
             )
 

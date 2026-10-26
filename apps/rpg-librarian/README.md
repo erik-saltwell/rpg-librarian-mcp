@@ -591,13 +591,15 @@ request-log location, even if classification fails.
 
 An isolated exhausted transfer does not stop classification of other files. Any
 unresolved item blocks admission of the entire source; three consecutive exhausted
-files pause the source to avoid hammering an unavailable service. Temporary outages
-and source-budget exhaustion produce a `deferred` outcome with saved progress and
-exit zero for the first two consecutive runs. The existing timer retries on its next
-scheduled invocation; a manual rerun also resumes progress. The third consecutive
-deferral (and each subsequent one until recovery) becomes `failed`, returns nonzero,
-and joins the combined failure notification. A successful source lifecycle resets
-the deferral count. A deferred receipt is not a completed source sync.
+files pause the source to avoid hammering an unavailable service. Source-budget
+exhaustion produces a `deferred` outcome with saved progress, exits zero, and never
+sends a failure email, even across repeated nights. It resets the temporary-failure
+counter. The existing timer retries on its next scheduled invocation; a manual
+rerun also resumes progress. Temporary service failures defer quietly for the first
+two consecutive runs. The third consecutive service failure (and each subsequent
+one until recovery) becomes `failed`, returns nonzero, and joins the combined
+failure notification. A successful source lifecycle also resets the counter.
+A deferred receipt is not a completed source sync.
 
 Small-batch admission and each published file are journaled. Rerunning resumes an
 unfinished admitted batch **before** the zero-new-files decision, even if the source

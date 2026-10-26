@@ -16,6 +16,8 @@ from urllib.parse import quote, urlparse
 
 import requests
 
+from .errors import SourceBudgetExceeded
+
 GRAPH = "https://graph.microsoft.com/v1.0"
 TRANSIENT = {429, 500, 502, 503, 504}
 ATTEMPTS = 5
@@ -57,7 +59,7 @@ class OneDrive:
     def timeout(self) -> float:
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
-            raise TimeoutError("OneDrive time budget reached; progress saved.")
+            raise SourceBudgetExceeded("OneDrive time budget reached; progress saved.")
         return min(45.0, remaining)
 
     def emit(self, event: dict, response: requests.Response | None = None) -> None:
@@ -99,7 +101,9 @@ class OneDrive:
 
     def pause(self, delay: float) -> None:
         if time.monotonic() + delay >= self.deadline:
-            raise TimeoutError("OneDrive retry exceeds the run budget; progress saved.")
+            raise SourceBudgetExceeded(
+                "OneDrive retry exceeds the run budget; progress saved."
+            )
         time.sleep(delay)
 
     def get(

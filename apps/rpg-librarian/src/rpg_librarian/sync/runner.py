@@ -12,6 +12,7 @@ from pathlib import Path
 
 from sqlmodel import select
 
+from rpg_librarian_tools.errors import SourceBudgetExceeded
 from rpg_librarian_tools.onedrive import TRANSIENT, GraphError
 
 from ..batch.notifications import notify as notify_batch
@@ -408,22 +409,31 @@ def run(args, catalog: Path) -> int:
                     retryable = isinstance(error, (TimeoutError, ConnectionError)) or (
                         isinstance(error, GraphError) and error.status in TRANSIENT
                     )
+                    budget_reached = isinstance(error, SourceBudgetExceeded)
                     count = 0
                     if retryable:
                         with_source = State(catalog, name)
                         try:
-                            count = with_source.get("sync_consecutive_deferrals", 0) + 1
+                            # Routine deadline pauses are not service failures.
+                            count = (
+                                0
+                                if budget_reached
+                                else with_source.get("sync_consecutive_deferrals", 0)
+                                + 1
+                            )
                             with_source.set("sync_consecutive_deferrals", count)
                             with_source.db.commit()
                         finally:
                             with_source.close()
-                    deferred = retryable and count < 3
+                    deferred = retryable and (budget_reached or count < 3)
                     result.update(
                         outcome="deferred" if deferred else "failed",
                         error_type=type(error).__name__,
                         retryable=retryable,
                         consecutive_deferrals=count if retryable else 0,
                     )
+                    if budget_reached:
+                        result["deferral_reason"] = "source_budget_reached"
                     if retryable:
                         result["next_action"] = (
                             "Resume on the next scheduled run or rerun sync-sources; "

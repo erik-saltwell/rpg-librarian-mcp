@@ -19,3 +19,11 @@ running under the existing service; the full live outcome is still pending. Resu
 by reading the live receipt linked in plan.md, checking the service/journal, and
 recording the final classification/notification outcome before marking this item
 complete. The automatic 100-file limit remains unchanged.
+
+
+October 25 follow-up: ordinary time-budget pauses now always defer quietly rather
+than escalating on the third night; actual service failures retain escalation.
+Disposable behavior verification, lint, and types passed. Live recovery receipts
+show increasing classification progress through October 25, but final completion
+remains pending. See the follow-up in plan.md; next action is to inspect the next
+scheduled receipt after October 26 at 03:00 PDT.

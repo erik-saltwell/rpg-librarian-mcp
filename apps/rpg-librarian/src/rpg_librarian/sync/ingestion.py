@@ -9,6 +9,7 @@ import time
 import uuid
 from pathlib import Path
 
+from rpg_librarian_tools.errors import SourceBudgetExceeded
 from rpg_librarian_tools.onedrive import TRANSIENT, GraphError
 
 from ..batch.records import now
@@ -76,7 +77,7 @@ class Ingestion:
 
     def check_time(self) -> None:
         if time.monotonic() >= self.deadline:
-            raise TimeoutError("Source time budget reached; progress saved.")
+            raise SourceBudgetExceeded("Source time budget reached; progress saved.")
 
     def cached(self, item: RemoteFile) -> Path:
         key = hashlib.sha256(f"{item.identity}:{item.version}".encode()).hexdigest()
