@@ -300,13 +300,16 @@ class Ingestion:
                 self.state.set("sync_last_full_reconcile", time.time())
                 self.state.set("sync_reconcile_started", 0)
             self.result.update(
-                pending=len(pending), local_hashed_bytes=ownership.hashed_bytes
+                pending=len(pending),
+                local_hashed_bytes=ownership.hashed_bytes,
+                local_hashed_files=ownership.hashed_files,
             )
             self.save()
             return pending
         finally:
             self.result.update(
                 local_hashed_bytes=ownership.hashed_bytes,
+                local_hashed_files=ownership.hashed_files,
                 local_inventory_built=ownership.inventory_built,
                 local_candidates_indexed=ownership.indexed_files,
                 classification_seconds=round(time.monotonic() - started, 3),

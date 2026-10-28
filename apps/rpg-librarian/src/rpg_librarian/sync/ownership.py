@@ -53,6 +53,7 @@ class Ownership:
         self.deadline, self.inbox, self.sizes = deadline, inbox, sizes
         self.by_size: dict[int, set[Path]] = defaultdict(set)
         self.hashed_bytes = 0
+        self.hashed_files = 0
         self.indexed_files = 0
         self.inventory_built = False
         self.resources = ExitStack()
@@ -195,6 +196,7 @@ class Ownership:
             return stored[1]
         value = file_hash(path)
         self.hashed_bytes += path.stat().st_size
+        self.hashed_files += 1
         if signature(path) != before:
             raise UsageError("Local file changed while hashing; rerun sync.")
         with self.cache:

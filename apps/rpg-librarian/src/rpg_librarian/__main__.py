@@ -12,6 +12,7 @@ from .commands import (
     find_packs,
     imports,
     init,
+    library_stats,
     process_batch,
     quick_dedupe,
     reorganize,
@@ -32,6 +33,7 @@ Handler = Callable[[argparse.Namespace, Path], int]
 _VERBS = {
     "sync-sources": "Download and process registered sources serially.",
     "sync-source": "Manage, authorize and inspect registered download sources.",
+    "library-stats": "Rebuild library-stats.md beside the catalog.",
     "process-batch": "Run the batch pipeline unattended and report the review backlog.",
     "import-source": "Register, authorize or check the Brendan OneDrive source.",
     "import-run": "Retired: use sync-sources --source brendan.",
@@ -74,6 +76,7 @@ def _not_implemented(args: argparse.Namespace, catalog_path: Path) -> int:
 _HANDLERS: dict[str, Handler] = {
     "sync-sources": sync_sources.run,
     "sync-source": sync_sources.source,
+    "library-stats": library_stats.run,
     "process-batch": process_batch.run,
     "import-source": imports.source,
     "import-run": imports.retired_run,

@@ -24,6 +24,8 @@ from ..errors import UsageError
 from ..imports.state import State
 from ..infrastructure.job_lock import catalog_job_lock
 from ..model import Root, RootKind
+from ..services.catalog_backup import backup_catalog
+from ..services.library_stats import write_report
 from ..services.review_backlog import collect
 from .ingestion import Ingestion
 from .notifications import failures, manual_required
@@ -98,6 +100,15 @@ def recover(catalog: Path, run_id: str) -> None:
                 "reason": "parent_interrupted",
             }
             write_json(path, record)
+
+
+def library_added(batch: dict) -> int:
+    """Files the batch's reorganize stage moved into the library."""
+    return sum(
+        s.get("metrics", {}).get("moved", 0)
+        for s in batch.get("stages", [])
+        if s.get("name") == "reorganize"
+    )
 
 
 def process_source(
@@ -240,7 +251,9 @@ def process_source(
                 state.set("sync_admission", admission)
                 state.db.commit()
                 result.update(
-                    outcome="completed", backlog=previous_batch.data.get("backlog")
+                    outcome="completed",
+                    backlog=previous_batch.data.get("backlog"),
+                    library_added=library_added(previous_batch.data),
                 )
                 save()
                 return
@@ -307,6 +320,7 @@ def finish(
     )
     batch = json.loads(Path(admission["batch_summary"]).read_text())
     result["backlog"] = batch.get("backlog")
+    result["library_added"] = library_added(batch)
     if code in (130, 143):
         raise Interrupted(code)
     if code:
@@ -472,6 +486,17 @@ def run(args, catalog: Path) -> int:
                 else "completed"
             )
             delivered = failures(run_record, str(path), save)
+            if any(r.get("library_added") for r in run_record["sources"]):
+                try:
+                    run_record["backup"] = {"path": str(backup_catalog(catalog))}
+                    print(f"Catalog backup: {run_record['backup']['path']}", flush=True)
+                except Exception as error:
+                    # The backup is a convenience; it must never change the run outcome.
+                    run_record["backup"] = {"error_type": type(error).__name__}
+                    print(
+                        f"Catalog backup failed ({type(error).__name__}).", flush=True
+                    )
+                save()
             code = (
                 0
                 if run_record["outcome"] in {"completed", "deferred"} and delivered
@@ -513,6 +538,11 @@ def run(args, catalog: Path) -> int:
         signal.signal(signal.SIGTERM, previous)
         run_record["finished_at"] = now()
         save()
+        try:
+            print(f"Stats report: {write_report(catalog)}", flush=True)
+        except Exception as error:
+            # The report is a convenience; it must never change the run outcome.
+            print(f"Stats report not written ({type(error).__name__}).", flush=True)
         print(
             f"{run_record['outcome']}; "
             f"failure email {run_record['notification']['status']}. "
