@@ -36,10 +36,12 @@ def render(catalog: Path, now: datetime) -> str:
         "",
         f"**{totals:,} files** across **{len(by_type)} product types**.",
         "",
-        "| Product type | Files |",
-        "|---|---:|",
+        "| Product type | Products | Files |",
+        "|---|---:|---:|",
     ]
-    lines += [f"| {name} | {count:,} |" for name, count in by_type]
+    lines += [
+        f"| {name} | {products:,} | {files:,} |" for name, products, files in by_type
+    ]
     lines += [
         "",
         "## Files landed by month",
@@ -69,7 +71,13 @@ def library_counts(catalog: Path):
     )
     with readonly_connection(catalog) as db:
         by_type = db.execute(
-            f"SELECT {top} t, count(*) {live} GROUP BY t ORDER BY 2 DESC, 1"
+            f"SELECT {top} t, "
+            "count(DISTINCT coalesce(fe.product_id, pe.product_id)), count(*) "
+            "FROM file f JOIN root r ON r.id=f.root_id "
+            "LEFT JOIN entry fe ON fe.file_id=f.id "
+            "LEFT JOIN entry pe ON pe.pack_id=f.pack_id "
+            "WHERE r.kind='library' AND f.missing_since IS NULL "
+            f"AND {top} != '{TRASH_DIRNAME}' GROUP BY t ORDER BY 3 DESC, 1"
         ).fetchall()
         by_month = db.execute(
             f"SELECT substr(f.created_at,1,7) m, count(*) {live} GROUP BY m ORDER BY m"
@@ -77,8 +85,10 @@ def library_counts(catalog: Path):
         first_seen = db.execute(
             f"SELECT substr(min(f.created_at),1,10) {live}"
         ).fetchone()[0]
-    by_type = [(name or "(library root)", count) for name, count in by_type]
-    return sum(c for _, c in by_type), by_type, by_month, first_seen or "n/a"
+    by_type = [
+        (name or "(library root)", products, files) for name, products, files in by_type
+    ]
+    return sum(files for _, _, files in by_type), by_type, by_month, first_seen or "n/a"
 
 
 COLUMNS = [
